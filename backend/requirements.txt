@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+langgraph
+anthropic
+supabase
+pytest
+httpx
