@@ -6,28 +6,34 @@ for the user to approve it.
 
 from pydantic import BaseModel
 
-from app.agents.state import AgentState, Finding, PlannedAction, Source
+from app.agents.state import AgentState, Finding, PlannedAction, Source, activity
 from app.ai import llm
 
 SYSTEM = """You are a delivery lead writing a recovery plan for a project that is at risk.
 
-Each step must be a single concrete action in one of these tools:
-- linear: update_issue (target = issue identifier, value = the change, e.g. a new due date or assignee)
-- calendar: create_event (target = attendees, value = the meeting title and purpose)
-- gmail: send_email (target = recipient, value = what to tell them)
+Each step must be a single concrete action of one of these types:
+- linear / update_issue      target = issue identifier (PAY-124), value = the change to record
+- linear / assign_task       target = issue identifier, value = the person's name or email
+- linear / update_due_date   target = issue identifier, value = the new date as YYYY-MM-DD
+- calendar / create_event    target = attendee emails, comma separated, value = title and purpose
+- gmail / send_email         target = the recipient's email address, value = what to tell them
 
 Rules:
-- Every step must address a finding you were given. No generic project advice.
+- Every step must address exactly one of the findings you were given. Cite it by index.
+  No generic project advice, and no step for a problem nobody found.
+- The description says what will happen and why that unblocks the finding, naming the
+  people, issues and dates from the evidence rather than speaking in general terms.
 - Order the steps so the most urgent blocker is unblocked first.
 - Keep the plan short. Four or five steps is usually enough."""
 
 
 class _PlanStep(BaseModel):
     integration: Source
-    action: str
+    type: str
     description: str
     target: str
     value: str
+    finding_index: int
 
 
 class _RecoveryPlan(BaseModel):
@@ -37,10 +43,20 @@ class _RecoveryPlan(BaseModel):
 def run(state: AgentState) -> dict:
     findings = state["findings"]
     if not findings:
-        return {"plan": []}
+        return {
+            "plan": [],
+            "agent_activity": [activity("recovery", "ok", "No findings — no plan needed")],
+        }
 
     plan = llm.ask_for(_RecoveryPlan, SYSTEM, _build_prompt(state, findings))
-    return {"plan": [_to_action(step) for step in plan.steps]}
+    actions = [_to_action(step, findings) for step in plan.steps]
+
+    return {
+        "plan": actions,
+        "agent_activity": [
+            activity("recovery", "ok", f"{len(actions)} actions proposed, awaiting approval")
+        ],
+    }
 
 
 def _build_prompt(state: AgentState, findings: list[Finding]) -> str:
@@ -50,18 +66,23 @@ def _build_prompt(state: AgentState, findings: list[Finding]) -> str:
         "",
         "FINDINGS:",
     ]
-    for finding in findings:
-        lines.append(f"- [{finding.severity.upper()}] {finding.title}")
-        lines.append(f"  {finding.description}")
+    for index, finding in enumerate(findings):
+        lines.append(f"[{index}] [{finding.severity.upper()}] {finding.title}")
+        lines.append(f"    {finding.description}")
         for item in finding.evidence:
-            lines.append(f"  evidence: {item.source} · {item.title}")
+            lines.append(f"    evidence: {item.source} · {item.title}")
     return "\n".join(lines)
 
 
-def _to_action(step: _PlanStep) -> PlannedAction:
+def _to_action(step: _PlanStep, findings: list[Finding]) -> PlannedAction:
+    """The reason is the finding's own title, never the model's retelling of it."""
+    index = step.finding_index
+    reason = findings[index].title if 0 <= index < len(findings) else ""
     return PlannedAction(
         integration=step.integration,
-        action=step.action,
+        type=step.type,
         description=step.description,
-        params={"target": step.target, "value": step.value},
+        target=step.target,
+        reason=reason,
+        params={"value": step.value},
     )

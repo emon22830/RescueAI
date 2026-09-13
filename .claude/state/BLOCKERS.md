@@ -11,7 +11,14 @@ That is correct behaviour, not a bug.
 SQL editor, and `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` are in `backend/.env`.
 
 **Untested until then:** whether the schema applies cleanly and whether PostgREST
-returns the column names the service expects.
+returns the column names the service expects. `agent_runs` now also carries
+`triggered_by`, `health`, `summary`, `progress` and `activity` — if the table was ever
+created from an older `schema.sql`, `create table if not exists` will *not* add them and
+every completed run will fail on the update. Drop the table or add the columns by hand.
+
+The same applies to `actions`, which now has `type`, `target` and `reason` (previously
+`action`, `params.target` and `addresses`) and a five-state `status` check constraint —
+`pending`, `approved`, `executing`, `completed`, `failed`.
 
 ## 2 — No demo data in the real apps
 
@@ -30,3 +37,6 @@ real connected workspaces before any demo is possible.
   through the `gh` CLI instead. See [[adr-0006]].
 - `postgrest.APIError` is what the Supabase client raises; it is handled globally in
   `main.py`. Do not catch it per route.
+- The run column is `triggered_by`, not `trigger` — `trigger` is a SQL keyword and not
+  worth the quoting it would cost in every query.
+- `analyze` and `sync` are one code path ([[adr-0011]]). Changing one changes both.

@@ -27,4 +27,7 @@
 
 ## Executor
 - No LLM. It maps an action to an integration and calls it.
-- Never executes anything that is not `status = "pending"` and explicitly approved.
+- Never executes anything whose status is not `"approved"`. That guard lives in
+  `executor.execute`, the last code before an external workspace is written to.
+- An action's life is `pending → approved → executing → completed | failed`, and every
+  step of it is written to the database as it happens.

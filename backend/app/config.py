@@ -18,14 +18,16 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     llm_model: str = "claude-opus-5"
 
-    # Integrations (filled in as each one is implemented)
+    # Integrations — an app with no credential here simply contributes no evidence
     slack_bot_token: str = ""
+    slack_channel_ids: str = ""  # optional: only read these channels
     linear_api_key: str = ""
     github_token: str = ""
-    github_repo: str = ""
+    github_repo: str = ""  # "owner/name"
     google_client_id: str = ""
     google_client_secret: str = ""
     google_refresh_token: str = ""
+    google_calendar_id: str = "primary"
 
     cors_origins: str = "http://localhost:5173"
 

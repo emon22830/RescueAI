@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
-import { Card, Stat } from '../components/ui/Card'
+import { Stat } from '../components/ui/Card'
 import { HealthBadge } from '../components/ui/Badge'
+import { ActionCard } from '../features/intelligence/ActionCard'
 import { FindingCard } from '../features/intelligence/FindingCard'
 import type { Action, Finding } from '../features/intelligence/types'
 import type { Project } from '../features/projects/types'
@@ -15,6 +16,10 @@ export function ProjectPage() {
   const [actions, setActions] = useState<Action[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The ids currently being executed. The approve request is synchronous, so this is
+  // what lets the plan show EXECUTING while the apps are actually being written to.
+  const [executing, setExecuting] = useState<string[]>([])
+  const [selected, setSelected] = useState<string[]>([])
 
   const load = useCallback(async () => {
     const [loadedProject, loadedFindings, loadedActions] = await Promise.all([
@@ -25,6 +30,7 @@ export function ProjectPage() {
     setProject(loadedProject)
     setFindings(loadedFindings)
     setActions(loadedActions)
+    setSelected(loadedActions.filter((action) => action.status === 'pending').map((a) => a.id))
   }, [projectId])
 
   useEffect(() => {
@@ -49,7 +55,19 @@ export function ProjectPage() {
   }
 
   const pending = actions.filter((action) => action.status === 'pending')
-  const executed = actions.filter((action) => action.status !== 'pending')
+  const done = actions.filter((action) => action.status !== 'pending')
+
+  function toggle(id: string) {
+    setSelected((current) =>
+      current.includes(id) ? current.filter((other) => other !== id) : [...current, id],
+    )
+  }
+
+  async function approve() {
+    setExecuting(selected)
+    await run(() => api.approveActions(projectId, selected))
+    setExecuting([])
+  }
 
   return (
     <div className="space-y-6">
@@ -93,44 +111,38 @@ export function ProjectPage() {
 
       {pending.length > 0 && (
         <section className="space-y-3">
-          <h2 className="font-medium">Recovery plan</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-medium">Recovery plan</h2>
+            <p className="text-sm text-slate-500">
+              Nothing is sent to Linear, Calendar or Gmail until you approve it.
+            </p>
+          </div>
+
           {pending.map((action) => (
-            <Card key={action.id}>
-              <div className="text-xs font-medium uppercase text-slate-500">
-                {action.integration} · {action.action}
-              </div>
-              <p className="text-sm">{action.description}</p>
-            </Card>
+            <ActionCard
+              key={action.id}
+              action={action}
+              status={executing.includes(action.id) ? 'executing' : 'pending'}
+              selected={selected.includes(action.id)}
+              onToggle={() => toggle(action.id)}
+            />
           ))}
+
           <button
-            onClick={() =>
-              run(() => api.approveActions(projectId, pending.map((action) => action.id)))
-            }
-            disabled={busy}
+            onClick={approve}
+            disabled={busy || selected.length === 0}
             className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
-            Approve &amp; execute
+            {busy ? 'Executing…' : `Approve & execute ${selected.length} action${selected.length === 1 ? '' : 's'}`}
           </button>
         </section>
       )}
 
-      {executed.length > 0 && (
+      {done.length > 0 && (
         <section className="space-y-3">
-          <h2 className="font-medium">Executed actions</h2>
-          {executed.map((action) => (
-            <Card key={action.id}>
-              <div className="flex items-center justify-between">
-                <p className="text-sm">{action.description}</p>
-                <span
-                  className={
-                    action.status === 'executed' ? 'text-sm text-emerald-700' : 'text-sm text-red-700'
-                  }
-                >
-                  {action.status}
-                </span>
-              </div>
-              {action.result && <p className="mt-1 text-sm text-slate-600">{action.result}</p>}
-            </Card>
+          <h2 className="font-medium">Actions taken</h2>
+          {done.map((action) => (
+            <ActionCard key={action.id} action={action} status={action.status} />
           ))}
         </section>
       )}

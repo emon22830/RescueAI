@@ -28,6 +28,8 @@ def test_create_project_returns_the_saved_project(client: TestClient):
     assert project["id"]
     assert project["summary"] == {
         "health": "on_track",
+        "summary": "",
+        "progress": None,
         "blockers": 0,
         "risks": 0,
         "findings": 0,
@@ -73,7 +75,8 @@ def test_health_summary_reflects_the_latest_run(client: TestClient, db):
     _seed_run(db, project["id"], severities=["critical", "medium"])
 
     summary = client.get(f"/projects/{project['id']}").json()["summary"]
-    assert summary == {"health": "at_risk", "blockers": 1, "risks": 1, "findings": 2}
+    assert summary["health"] == "at_risk"
+    assert (summary["blockers"], summary["risks"], summary["findings"]) == (1, 1, 2)
 
 
 def test_resync_replaces_the_previous_findings(client: TestClient, db):
@@ -82,7 +85,8 @@ def test_resync_replaces_the_previous_findings(client: TestClient, db):
     _seed_run(db, project["id"], severities=["low"])
 
     summary = client.get(f"/projects/{project['id']}").json()["summary"]
-    assert summary == {"health": "watch", "blockers": 0, "risks": 1, "findings": 1}
+    assert summary["health"] == "watch"
+    assert (summary["blockers"], summary["risks"], summary["findings"]) == (0, 1, 1)
 
     findings = client.get(f"/projects/{project['id']}/findings").json()
     assert len(findings) == 1

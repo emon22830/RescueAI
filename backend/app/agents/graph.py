@@ -7,8 +7,8 @@
                 ↓
               risk  ──►  recovery
 
-The three investigation agents run in parallel and each append to state["evidence"].
-Risk waits for all three before it runs.
+The three investigation agents run in parallel and each append to state["evidence"]
+and state["agent_activity"]. Risk waits for all three before it runs.
 """
 
 from functools import lru_cache
@@ -54,6 +54,10 @@ def analyze(project_id: str, name: str, goal: str) -> AgentState:
             "project_goal": goal,
             "evidence": [],
             "findings": [],
+            "health": "on_track",
+            "summary": "",
+            "progress": None,
             "plan": [],
+            "agent_activity": [],
         }
     )

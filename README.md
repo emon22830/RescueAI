@@ -214,16 +214,20 @@ The workflow runs end to end — supervisor → three parallel investigators →
 recovery → approval → executor — and the run, evidence, findings and actions are all
 persisted per project.
 
-The six integration modules in [backend/app/integrations/](backend/app/integrations/) are
-scaffolded but return no evidence yet, so out of the box the agent correctly finds nothing.
-Each is a single file with two functions. Implement them in this order:
+All six integration modules in [backend/app/integrations/](backend/app/integrations/) are
+implemented against the real APIs — `httpx` against the documented REST and GraphQL
+endpoints, no vendor SDKs. Each is a single file that collects evidence and, where the app
+is a write target, executes approved actions:
 
-1. `slack.py` — `collect_evidence`
-2. `linear.py` — `collect_evidence` + `execute_action` (`update_issue`)
-3. `github.py` — `collect_evidence`
-4. `calendar.py` — `execute_action` (`create_event`)
-5. `gmail.py` — `collect_evidence` + `execute_action` (`send_email`)
-6. `drive.py` — `collect_evidence`
+| File | Collects | Executes |
+|---|---|---|
+| `slack.py` | messages from the last 30 days in channels about the project | — |
+| `gmail.py` | mail from the last 60 days matching the project | `send_email` |
+| `drive.py` | matching files, with Docs and Sheets exported to text | — |
+| `linear.py` | the project and its issues — state, assignee, due date | `update_issue` · `assign_task` · `update_due_date` |
+| `github.py` | commits, pull requests and issues from the last 30 days | — |
+| `calendar.py` | events from the last week to 90 days ahead | `create_event` |
 
-`collect_evidence` only has to return `list[Evidence]`. The agents, the prompts, the
-persistence and the UI already handle everything downstream.
+An app with no credential in `backend/.env` logs a warning and contributes nothing, so a
+partial setup still produces findings from the apps that are wired up. An API error is
+never swallowed — it fails the run with the real reason.

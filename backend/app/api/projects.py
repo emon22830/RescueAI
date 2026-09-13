@@ -17,9 +17,15 @@ class CreateProjectRequest(BaseModel):
 
 
 class ProjectSummary(BaseModel):
-    """What the dashboard shows at a glance, from the latest completed run."""
+    """What the dashboard shows at a glance, from the latest completed run.
+
+    `summary` and `progress` are the agent's own words and number, stored on that run.
+    `progress` is null whenever the evidence did not measure it.
+    """
 
     health: Literal["on_track", "watch", "at_risk"]
+    summary: str = ""
+    progress: int | None = None
     blockers: int
     risks: int
     findings: int

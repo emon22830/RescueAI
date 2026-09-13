@@ -20,12 +20,23 @@ export interface Finding {
   created_at: string
 }
 
+/** Proposed by the agent, approved by a human, run, then done or not. */
+export type ActionStatus = 'pending' | 'approved' | 'executing' | 'completed' | 'failed'
+
 export interface Action {
   id: string
   integration: Source
-  action: string
+  /** "update_issue" | "assign_task" | "update_due_date" | "create_event" | "send_email" */
+  type: string
   description: string
+  /** What it acts on: the issue, the attendees, the recipient. */
+  target: string
+  /** The finding this action is meant to fix. */
+  reason: string
   params: Record<string, string>
-  status: 'pending' | 'executed' | 'failed'
+  status: ActionStatus
+  /** What the app said back, or why it failed. */
   result: string | null
+  approved_at: string | null
+  executed_at: string | null
 }

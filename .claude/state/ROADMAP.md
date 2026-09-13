@@ -10,11 +10,12 @@ Repo, backend, workflow skeleton, schema, frontend shell, tests.
 The nine things that must survive any time cut.
 
 1. Live Supabase — schema applied, `.env` filled, endpoints verified against it
-2. Slack `collect_evidence`
-3. Linear `collect_evidence` + `execute_action("update_issue")`
-4. GitHub `collect_evidence`
-5. Risk agent producing real findings from real evidence
-6. Recovery agent producing a real plan
+2. ✅ Slack `collect_evidence`
+3. ✅ Linear `collect_evidence` + `execute_action("update_issue")`
+4. ✅ GitHub `collect_evidence`
+5. Risk agent producing real findings from real evidence — wired and persisted, still
+   waiting on real evidence and an `ANTHROPIC_API_KEY` to judge the prompt
+6. Recovery agent producing a real plan — same: wired and persisted, never run for real
 7. Approval gate in the UI
 8. Real execution writing back to Linear
 9. Dashboard showing it
@@ -23,9 +24,11 @@ The nine things that must survive any time cut.
 is surfaced, explained with links, and fixed by an approved action.
 
 ## Phase 3 — The remaining three apps → v0.3.0
-10. Gmail `collect_evidence` + `execute_action("send_email")`
-11. Drive `collect_evidence`
-12. Calendar `execute_action("create_event")`
+10. ✅ Gmail `collect_evidence` + `execute_action("send_email")`
+11. ✅ Drive `collect_evidence`
+12. ✅ Calendar `collect_evidence` + `execute_action("create_event")`
+
+Code is written for all three; none has been run against a live account yet.
 
 ## Phase 4 — Demo polish → v1.0.0
 The "SaaS Product Launch" scenario seeded across all six real workspaces, the
