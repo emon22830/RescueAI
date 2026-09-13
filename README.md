@@ -22,7 +22,7 @@ Collect evidence → Understand state → Detect blockers → Recovery plan
 
 ## Demo
 
-▶️ **Presentation demo:** _<!-- paste the YouTube link here -->_
+▶️ **Presentation demo:** https://youtu.be/sbWLUt8JJik
 
 ---
 
