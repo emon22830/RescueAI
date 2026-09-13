@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(cd backend && .venv/bin/python -m pytest *)",
+      "Bash(.venv/bin/python -m pytest *)",
+      "Bash(cd frontend && npm run build)",
+      "Bash(npm run build)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)"
+    ],
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(rm -rf *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat .claude/state/STATE.md .claude/state/BLOCKERS.md 2>/dev/null || true",
+            "statusMessage": "Loading project state"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "S=$(git status --porcelain 2>/dev/null); if echo \"$S\" | grep -qE \"^.. (backend|frontend)/\" && ! echo \"$S\" | grep -q \"^.. \\.claude/state/\"; then printf \"%s\" '{\"systemMessage\":\"Code changed but .claude/state/ was not updated — run /handoff before ending this session.\"}'; fi; true"
+          }
+        ]
+      }
+    ]
+  }
+}

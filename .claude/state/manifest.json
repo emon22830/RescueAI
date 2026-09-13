@@ -1,0 +1,22 @@
+{
+  "project": "AI Project Rescue",
+  "repo": "https://github.com/emon22830/RescueAI",
+  "version": "0.1.0",
+  "phase": "1 of 4 — Foundation",
+  "updated": "2026-09-14",
+  "claude_setup_version": "1.0.0",
+  "stack_locked": true,
+  "surfaces": {
+    "backend": { "version": "0.1.0", "status": "runnable, integrations stubbed" },
+    "frontend": { "version": "0.1.0", "status": "builds, 3 pages wired to the API" }
+  },
+  "context_versions": {
+    "00-product.md": 1,
+    "01-architecture.md": 1,
+    "02-stack.md": 1,
+    "03-schema.md": 1,
+    "04-api-contracts.md": 1
+  },
+  "latest_adr": 6,
+  "open_blockers": 2
+}
