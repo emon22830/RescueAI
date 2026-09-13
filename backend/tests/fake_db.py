@@ -65,6 +65,11 @@ class Query:
                 row.update(self._payload)
             return Result(matched)
 
+        if self._operation == "delete":
+            for row in matched:
+                self._rows.remove(row)
+            return Result(matched)
+
         if self._order:
             column, desc = self._order
             matched = sorted(matched, key=lambda row: row.get(column) or "", reverse=desc)
@@ -90,6 +95,25 @@ class Table:
     def update(self, payload: dict) -> Query:
         return Query(self._rows, "update", payload)
 
+    def delete(self) -> Query:
+        return Query(self._rows, "delete")
+
+    def upsert(self, payload: dict, on_conflict: str | None = None) -> Query:
+        """Good enough for the one real upsert in the app: match on `on_conflict`'s
+        columns, update the row if one matches, otherwise insert a new one."""
+        keys = (on_conflict or "id").split(",")
+        match = next(
+            (row for row in self._rows if all(row.get(key) == payload.get(key) for key in keys)),
+            None,
+        )
+        if match is not None:
+            match.update(payload)
+            return Query(self._rows, "insert", [dict(match)])
+
+        inserted = self._with_defaults(payload)
+        self._rows.append(inserted)
+        return Query(self._rows, "insert", [dict(inserted)])
+
     def _with_defaults(self, record: dict) -> dict:
         row = {"id": str(uuid.uuid4()), **record}
         timestamp_column = DEFAULT_TIMESTAMPS.get(self._name)
@@ -99,9 +123,31 @@ class Table:
         return row
 
 
+class FakeUser:
+    def __init__(self, id: str, email: str | None = None):
+        self.id = id
+        self.email = email
+
+
+class FakeAuthResponse:
+    def __init__(self, user: FakeUser | None):
+        self.user = user
+
+
+class FakeAuth:
+    """Maps a bearer token to a user, the way Supabase's auth.get_user(token) does."""
+
+    def __init__(self) -> None:
+        self.users: dict[str, FakeUser] = {}
+
+    def get_user(self, token: str) -> FakeAuthResponse:
+        return FakeAuthResponse(self.users.get(token))
+
+
 class FakeDatabase:
     def __init__(self) -> None:
         self.tables: dict[str, list[dict]] = {}
+        self.auth = FakeAuth()
 
     def table(self, name: str) -> Table:
         return Table(name, self.tables.setdefault(name, []))

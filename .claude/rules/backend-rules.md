@@ -13,9 +13,17 @@
 
 ## Errors
 - Raise; do not return error dicts.
-- Four handlers in `main.py` cover config, not-found, database and validation.
+- The handlers in `main.py` cover config, auth, not-found, database and validation.
   Add a handler there rather than try/except in a route.
 - Config errors must name the missing variable. `settings.require("supabase_url", ...)`.
+
+## Auth
+- Every route that touches a project depends on `app.auth.get_current_user` and passes
+  `user.id` into `projects/service.py` as the owner to check against.
+- The backend calls Supabase with the service key, which bypasses row-level security —
+  so ownership is an application-code check in `service.py`, never assumed from the URL.
+- An id that exists but belongs to someone else raises the same `ProjectNotFound` as an
+  id that doesn't exist. Never let a 403 confirm that a project id is real.
 
 ## Database
 - Only `projects/service.py` calls `get_db()`.

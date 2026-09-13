@@ -24,7 +24,7 @@ def apps(monkeypatch):
         monkeypatch.setattr(
             module,
             "collect_evidence",
-            lambda _name, source=source: [
+            lambda _project_id, _name, source=source: [
                 Evidence(
                     source=source,
                     type="message",
@@ -223,7 +223,7 @@ def test_a_failed_run_is_recorded_and_surfaced(client, apps, monkeypatch):
     project_id = create_project(client)
 
     def boom(*_args, **_kwargs):
-        raise RuntimeError("Anthropic is down")
+        raise RuntimeError("Gemini is down")
 
     monkeypatch.setattr(risk.llm, "ask_for", boom)
 
@@ -234,7 +234,7 @@ def test_a_failed_run_is_recorded_and_surfaced(client, apps, monkeypatch):
 
     run = client.get(f"/projects/{project_id}/runs").json()[0]
     assert run["status"] == "failed"
-    assert "Anthropic is down" in run["error"]
+    assert "Gemini is down" in run["error"]
 
     # A failed run must not become the project state.
     assert client.get(f"/projects/{project_id}").json()["summary"]["health"] == "on_track"

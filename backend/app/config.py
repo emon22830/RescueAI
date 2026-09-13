@@ -15,21 +15,32 @@ class Settings(BaseSettings):
     supabase_service_key: str = ""
 
     # LLM
-    anthropic_api_key: str = ""
-    llm_model: str = "claude-opus-5"
+    gemini_api_key: str = ""
+    llm_model: str = "gemini-3.8-flash"
 
-    # Integrations — an app with no credential here simply contributes no evidence
-    slack_bot_token: str = ""
-    slack_channel_ids: str = ""  # optional: only read these channels
-    linear_api_key: str = ""
-    github_token: str = ""
-    github_repo: str = ""  # "owner/name"
+    # Encrypts the Slack/Linear/GitHub tokens each project connects for itself, before
+    # they are stored in the `integrations` table. Generate one with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    credential_encryption_key: str = ""
+
+    # Identifies this application to Google — not any one user's credential. Each
+    # project grants its own access from its Connections page, and that refresh token
+    # is stored encrypted per project, never here. See integrations/google_auth.py.
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_refresh_token: str = ""
     google_calendar_id: str = "primary"
 
+    # Where Google sends the browser back after consent. Must match the authorized
+    # redirect URI on the OAuth client exactly.
+    backend_url: str = "http://localhost:8000"
+
     cors_origins: str = "http://localhost:5173"
+
+    @property
+    def app_url(self) -> str:
+        """Where to send a user once an OAuth round trip is finished — the first
+        allowed origin, which is the app itself."""
+        return settings.cors_origins.split(",")[0].strip()
 
     def require(self, *names: str) -> None:
         """Fail with one clear message naming every variable that is missing."""

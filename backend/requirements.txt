@@ -3,7 +3,8 @@ uvicorn[standard]
 pydantic
 pydantic-settings
 langgraph
-anthropic
+google-genai
 supabase
+cryptography
 pytest
 httpx

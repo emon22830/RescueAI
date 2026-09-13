@@ -46,7 +46,7 @@ def apps(monkeypatch):
     monkeypatch.setattr(
         slack,
         "collect_evidence",
-        lambda _name: [
+        lambda _project_id, _name: [
             Evidence(
                 source="slack",
                 type="message",

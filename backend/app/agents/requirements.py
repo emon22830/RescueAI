@@ -8,6 +8,7 @@ from app.integrations import calendar, drive
 def run(state: AgentState) -> dict:
     return supervisor.investigate(
         "requirements",
+        state["project_id"],
         state["project_name"],
         {"drive": drive.collect_evidence, "calendar": calendar.collect_evidence},
     )

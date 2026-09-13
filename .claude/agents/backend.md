@@ -28,4 +28,4 @@ State the result. Do not claim it passes without running it.
 - Add a repository class, manager, factory, or `utils.py`.
 - Call `get_db()` outside `projects/service.py`.
 - Read an environment variable outside `app/config.py`.
-- Import `anthropic` outside `app/ai/llm.py`.
+- Import the LLM SDK (`google-genai`) outside `app/ai/llm.py`.

@@ -3,10 +3,11 @@
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.agents.state import AgentActivity, Evidence, Health, Severity
+from app.auth import CurrentUser, get_current_user
 from app.projects import service
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["analysis"])
@@ -40,26 +41,26 @@ class FindingResponse(BaseModel):
 
 
 @router.post("/analyze", response_model=AgentRunResponse)
-def analyze_project(project_id: str) -> dict:
+def analyze_project(project_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
     """Collect evidence from every connected app, analyze it, and save the result."""
-    return service.analyze_project(project_id, triggered_by="analyze")
+    return service.analyze_project(project_id, user.id, triggered_by="analyze")
 
 
 @router.post("/sync", response_model=AgentRunResponse)
-def sync_project(project_id: str) -> dict:
+def sync_project(project_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
     """Re-collect from the connected apps and replace the project state with what is true now.
 
     The work is the same investigation as /analyze — a sync is a fresh collection, not a
     cheaper one — so the difference is only which button the history says was pressed.
     """
-    return service.analyze_project(project_id, triggered_by="sync")
+    return service.analyze_project(project_id, user.id, triggered_by="sync")
 
 
 @router.get("/findings", response_model=list[FindingResponse])
-def get_findings(project_id: str) -> list[dict]:
-    return service.get_findings(project_id)
+def get_findings(project_id: str, user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    return service.get_findings(project_id, user.id)
 
 
 @router.get("/runs", response_model=list[AgentRunResponse])
-def get_runs(project_id: str) -> list[dict]:
-    return service.get_runs(project_id)
+def get_runs(project_id: str, user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    return service.get_runs(project_id, user.id)

@@ -17,7 +17,11 @@
 
 ## UI
 - Tailwind utility classes. No CSS files beyond `index.css`.
-- Every async action needs a visible loading state and a visible error state.
+- Colour, type, spacing, radius and dark mode are defined in
+  `.claude/rules/ui-design-rules.md`. Read it before writing a component.
+- Semantic tokens only — `bg-surface`, `text-muted`, `border-line`. Never `bg-white`,
+  never a `dark:` class for a surface.
+- Every async surface handles four states: loading, error, empty, ready.
 - Evidence is always reachable from a finding. "Why?" is the product.
 
 ## Checks

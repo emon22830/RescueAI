@@ -12,7 +12,7 @@
 
 ## LLM use
 - Only `risk` and `recovery` call the LLM. Investigators collect; they do not reason.
-- Never call `anthropic` directly — use `llm.ask_for(Model, system, prompt)`.
+- Never call the LLM SDK directly — use `llm.ask_for(Model, system, prompt)`.
 - Short-circuit before spending money: no evidence → no findings, no findings → no plan.
 
 ## Evidence citation

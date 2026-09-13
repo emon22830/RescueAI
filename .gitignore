@@ -16,3 +16,6 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+
+# Local Claude Code settings (may contain machine-specific config)
+.claude/settings.local.json

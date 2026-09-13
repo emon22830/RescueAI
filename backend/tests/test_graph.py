@@ -27,7 +27,9 @@ def apps(monkeypatch):
     for module in (slack, gmail, github, linear, drive, calendar):
         source = module.__name__.rsplit(".", 1)[-1]
         monkeypatch.setattr(
-            module, "collect_evidence", lambda _name, source=source: [evidence(source, source)]
+            module,
+            "collect_evidence",
+            lambda _project_id, _name, source=source: [evidence(source, source)],
         )
 
 
@@ -110,7 +112,7 @@ def test_findings_cite_real_evidence_and_set_health(apps, monkeypatch):
 
 
 def test_one_broken_app_does_not_lose_the_others(apps, monkeypatch):
-    def boom(_name):
+    def boom(_project_id, _name):
         raise RuntimeError("Slack is down")
 
     monkeypatch.setattr(slack, "collect_evidence", boom)

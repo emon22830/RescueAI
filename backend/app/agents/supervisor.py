@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from app.agents.state import AgentState, Evidence, activity
 
-Collector = Callable[[str], list[Evidence]]
+Collector = Callable[[str, str], list[Evidence]]
 
 AGENTS = ("communication", "engineering", "requirements")
 
@@ -27,7 +27,9 @@ def run(state: AgentState) -> dict:
     }
 
 
-def investigate(agent: str, project_name: str, sources: dict[str, Collector]) -> dict:
+def investigate(
+    agent: str, project_id: str, project_name: str, sources: dict[str, Collector]
+) -> dict:
     """Collect from each of one agent's apps, logging what each one returned.
 
     One unreachable app must not throw away the evidence the others already found,
@@ -40,7 +42,7 @@ def investigate(agent: str, project_name: str, sources: dict[str, Collector]) ->
 
     for name, collect in sources.items():
         try:
-            found = collect(project_name)
+            found = collect(project_id, project_name)
         except Exception as error:
             log.append(activity(agent, "failed", f"{name}: {type(error).__name__}: {error}"))
             continue

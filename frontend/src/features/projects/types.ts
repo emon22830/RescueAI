@@ -1,3 +1,5 @@
+import type { Source } from '../intelligence/types'
+
 export type Health = 'on_track' | 'watch' | 'at_risk'
 
 export interface ProjectSummary {
@@ -16,7 +18,11 @@ export interface Project {
   name: string
   goal: string
   created_at: string
-  summary?: ProjectSummary
+  /** Always present — the latest completed run's state, or zeroes before the first run. */
+  summary: ProjectSummary
+  /** The apps this project can reach right now. Comes with the project so a card can
+   *  show its connectors without one request per project. */
+  connected: Source[]
 }
 
 /** One line of the agent's log: which node ran and what it came back with. */

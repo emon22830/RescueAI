@@ -4,6 +4,8 @@
     "allow": [
       "Bash(cd backend && .venv/bin/python -m pytest *)",
       "Bash(.venv/bin/python -m pytest *)",
+      "Bash(cd backend && .venv/bin/python *)",
+      "Bash(.venv/bin/python *)",
       "Bash(cd frontend && npm run build)",
       "Bash(npm run build)",
       "Bash(git status *)",

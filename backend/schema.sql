@@ -1,22 +1,40 @@
 -- Run this once in the Supabase SQL editor.
 
+-- SaaS: every project belongs to the Supabase Auth user who created it. The backend
+-- talks to Supabase with the service key, which bypasses row-level security, so
+-- ownership is enforced in app/projects/service.py, not in Postgres policies here.
 create table if not exists projects (
   id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   goal text not null,
   created_at timestamptz not null default now()
 );
 
+create index if not exists projects_owner_idx on projects (owner_id);
+
+-- One row per project per connected app. `encrypted_token` holds a Fernet-encrypted
+-- Slack/Linear/GitHub credential (see app/security.py) — never a plaintext value, and
+-- never sent back to the frontend once saved. Gmail/Drive/Calendar are still one shared
+-- Google OAuth app configured in backend/.env (Phase 2 moves them here too), so they
+-- have no row and are reported from settings instead — see app/api/integrations.py.
 create table if not exists integrations (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
   provider text not null check (
-    provider in ('slack', 'gmail', 'drive', 'linear', 'github', 'calendar')
+    -- 'google' is one row covering Gmail, Drive and Calendar: they are three APIs
+    -- behind a single OAuth consent, so they share one refresh token.
+    provider in ('slack', 'linear', 'github', 'google')
   ),
-  connected boolean not null default false,
+  encrypted_token text not null,
+  metadata jsonb not null default '{}',
+  connected_by uuid not null references auth.users(id),
+  connected_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   unique (project_id, provider)
 );
+
+create index if not exists integrations_project_idx on integrations (project_id);
 
 -- A run holds the project state the agent produced: health, summary and progress.
 -- They are stored, not recomputed on read, so the dashboard shows what the agent

@@ -47,8 +47,12 @@ class PlannedAction(BaseModel):
     the email's recipient — and `params` carries whatever else that action type
     needs: `value` (the change, the body, the purpose) plus extras like `due_date`,
     `subject` or `start`.
+
+    `project_id` says whose stored credential to execute it with — required because
+    every project can connect a different Slack/Linear/GitHub token.
     """
 
+    project_id: str = ""
     integration: Source
     type: str  # "update_issue", "assign_task", "update_due_date", "create_event", "send_email"
     description: str

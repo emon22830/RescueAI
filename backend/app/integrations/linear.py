@@ -1,11 +1,15 @@
-"""Linear. Reads project evidence; write actions live in execute_action()."""
+"""Linear. Reads project evidence; write actions live in execute_action().
+
+Each project connects its own personal API key from the frontend (see
+projects/service.py connect_integration), so every function here takes the key
+explicitly rather than reading one shared value off app.config.settings.
+"""
 
 import logging
 
 import httpx
 
 from app.agents.state import Evidence, PlannedAction
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +37,29 @@ class LinearError(RuntimeError):
     """Linear answers 200 with an `errors` array — the reason is in the body."""
 
 
-def collect_evidence(project_name: str) -> list[Evidence]:
+def collect_evidence(project_id: str, project_name: str) -> list[Evidence]:
     """The Linear project and its issues: status, assignee and due date for each."""
-    if not settings.linear_api_key:
-        logger.warning("Linear skipped: LINEAR_API_KEY is empty in backend/.env")
+    from app.projects import service
+
+    credential = service.get_integration_credential(project_id, "linear")
+    if credential is None:
+        logger.warning("Linear skipped: project %s has not connected Linear", project_id)
         return []
 
-    evidence = [_project_evidence(project) for project in find_projects(project_name)]
-    evidence += [_issue_evidence(issue) for issue in find_issues(project_name)]
+    token = credential["token"]
+    evidence = [_project_evidence(project) for project in find_projects(project_name, token)]
+    evidence += [_issue_evidence(issue) for issue in find_issues(project_name, token)]
     return evidence
 
 
-def find_projects(project_name: str) -> list[dict]:
+def verify_token(token: str) -> dict:
+    """Confirm the key actually works before it is stored. Called by the connect flow."""
+    query = "query { viewer { name email } }"
+    viewer = graphql(query, {}, token)["viewer"]
+    return {"user": viewer.get("name", ""), "email": viewer.get("email", "")}
+
+
+def find_projects(project_name: str, token: str) -> list[dict]:
     """Linear projects whose name contains the project name."""
     query = """
       query($name: String!) {
@@ -56,10 +71,10 @@ def find_projects(project_name: str) -> list[dict]:
         }
       }
     """
-    return graphql(query, {"name": project_name})["projects"]["nodes"]
+    return graphql(query, {"name": project_name}, token)["projects"]["nodes"]
 
 
-def find_issues(project_name: str) -> list[dict]:
+def find_issues(project_name: str, token: str) -> list[dict]:
     """Issues in a matching project, or whose own title or description names it."""
     query = """
       query($name: String!, $limit: Int!) {
@@ -78,58 +93,58 @@ def find_issues(project_name: str) -> list[dict]:
         }
       }
     """ % ISSUE_FIELDS
-    return graphql(query, {"name": project_name, "limit": MAX_ISSUES})["issues"]["nodes"]
+    return graphql(query, {"name": project_name, "limit": MAX_ISSUES}, token)["issues"]["nodes"]
 
 
 # --- write actions -----------------------------------------------------------
 
 
-def update_issue_state(identifier: str, state_name: str) -> str:
+def update_issue_state(identifier: str, state_name: str, token: str) -> str:
     """Move an issue to a workflow state by name, e.g. "In Progress" or "Done"."""
-    issue = fetch_issue(identifier)
+    issue = fetch_issue(identifier, token)
     states = issue["team"]["states"]["nodes"]
     state = next((s for s in states if s["name"].lower() == state_name.lower()), None)
     if state is None:
         available = ", ".join(s["name"] for s in states)
         raise LinearError(f"{identifier}: no state called '{state_name}'. Team states are: {available}")
 
-    updated = _update(issue["id"], {"stateId": state["id"]})
+    updated = _update(issue["id"], {"stateId": state["id"]}, token)
     return f"{identifier} moved to {updated['state']['name']} — {updated['url']}"
 
 
-def assign_issue(identifier: str, person: str) -> str:
+def assign_issue(identifier: str, person: str, token: str) -> str:
     """Assign an issue to a teammate, found by email or by name."""
-    issue = fetch_issue(identifier)
-    user = find_user(person)
+    issue = fetch_issue(identifier, token)
+    user = find_user(person, token)
     if user is None:
         raise LinearError(f"{identifier}: no active Linear user matching '{person}'")
 
-    updated = _update(issue["id"], {"assigneeId": user["id"]})
+    updated = _update(issue["id"], {"assigneeId": user["id"]}, token)
     return f"{identifier} assigned to {updated['assignee']['name']} — {updated['url']}"
 
 
-def update_due_date(identifier: str, due_date: str) -> str:
+def update_due_date(identifier: str, due_date: str, token: str) -> str:
     """Set an issue's due date. `due_date` is an ISO date: 2026-10-01."""
-    issue = fetch_issue(identifier)
-    updated = _update(issue["id"], {"dueDate": due_date})
+    issue = fetch_issue(identifier, token)
+    updated = _update(issue["id"], {"dueDate": due_date}, token)
     return f"{identifier} due {updated['dueDate']} — {updated['url']}"
 
 
-def comment_on_issue(identifier: str, body: str) -> str:
+def comment_on_issue(identifier: str, body: str, token: str) -> str:
     """Post a comment on an issue."""
-    issue = fetch_issue(identifier)
+    issue = fetch_issue(identifier, token)
     mutation = """
       mutation($input: CommentCreateInput!) {
         commentCreate(input: $input) { success comment { url } }
       }
     """
-    result = graphql(mutation, {"input": {"issueId": issue["id"], "body": body}})["commentCreate"]
+    result = graphql(mutation, {"input": {"issueId": issue["id"], "body": body}}, token)["commentCreate"]
     if not result["success"]:
         raise LinearError(f"{identifier}: Linear rejected the comment")
     return f"Commented on {identifier} — {result['comment']['url']}"
 
 
-def fetch_issue(identifier: str) -> dict:
+def fetch_issue(identifier: str, token: str) -> dict:
     """One issue by its identifier ("PAY-124"), with its team's workflow states."""
     query = """
       query($id: String!) {
@@ -141,16 +156,16 @@ def fetch_issue(identifier: str) -> dict:
         }
       }
     """
-    issue = graphql(query, {"id": identifier})["issue"]
+    issue = graphql(query, {"id": identifier}, token)["issue"]
     if issue is None:
         raise LinearError(f"No Linear issue called '{identifier}'")
     return issue
 
 
-def find_user(person: str) -> dict | None:
+def find_user(person: str, token: str) -> dict | None:
     """An active Linear user matched on email first, then on name."""
     query = "query { users(first: 250) { nodes { id name displayName email active } } }"
-    users = [user for user in graphql(query, {})["users"]["nodes"] if user["active"]]
+    users = [user for user in graphql(query, {}, token)["users"]["nodes"] if user["active"]]
 
     term = person.strip().lower()
     by_email = next((user for user in users if (user["email"] or "").lower() == term), None)
@@ -174,35 +189,41 @@ def execute_action(action: PlannedAction) -> str:
     describes the change in `value` has that text posted as a comment on the
     issue rather than guessed at.
     """
-    settings.require("linear_api_key")
+    from app.projects import service
+
+    credential = service.get_integration_credential(action.project_id, "linear")
+    if credential is None:
+        raise RuntimeError("Linear is not connected for this project")
+    token = credential["token"]
+
     if not action.target:
         raise ValueError(f"Linear {action.type} needs a target (the issue identifier)")
 
     if action.type == "assign_task":
-        return assign_issue(action.target, _required(action, "value"))
+        return assign_issue(action.target, _required(action, "value"), token)
     if action.type == "update_due_date":
-        return update_due_date(action.target, _required(action, "value"))
+        return update_due_date(action.target, _required(action, "value"), token)
     if action.type == "update_issue":
-        return _apply_issue_update(action, action.target)
+        return _apply_issue_update(action, action.target, token)
 
     raise NotImplementedError(f"Linear action not implemented: {action.type}")
 
 
-def _apply_issue_update(action: PlannedAction, identifier: str) -> str:
+def _apply_issue_update(action: PlannedAction, identifier: str, token: str) -> str:
     results = []
     if state := action.params.get("state"):
-        results.append(update_issue_state(identifier, state))
+        results.append(update_issue_state(identifier, state, token))
     if assignee := action.params.get("assignee"):
-        results.append(assign_issue(identifier, assignee))
+        results.append(assign_issue(identifier, assignee, token))
     if due_date := action.params.get("due_date"):
-        results.append(update_due_date(identifier, due_date))
+        results.append(update_due_date(identifier, due_date, token))
 
     if results:
         return " · ".join(results)
-    return comment_on_issue(identifier, _required(action, "value"))
+    return comment_on_issue(identifier, _required(action, "value"), token)
 
 
-def _update(issue_id: str, fields: dict) -> dict:
+def _update(issue_id: str, fields: dict, token: str) -> dict:
     mutation = """
       mutation($id: String!, $input: IssueUpdateInput!) {
         issueUpdate(id: $id, input: $input) {
@@ -211,7 +232,7 @@ def _update(issue_id: str, fields: dict) -> dict:
         }
       }
     """
-    result = graphql(mutation, {"id": issue_id, "input": fields})["issueUpdate"]
+    result = graphql(mutation, {"id": issue_id, "input": fields}, token)["issueUpdate"]
     if not result["success"]:
         raise LinearError(f"Linear rejected the update: {fields}")
     return result["issue"]
@@ -291,12 +312,12 @@ def _required(action: PlannedAction, key: str) -> str:
     return str(value)
 
 
-def graphql(query: str, variables: dict) -> dict:
+def graphql(query: str, variables: dict, token: str) -> dict:
     """One GraphQL call. Linear reports failures in the body, not the status code."""
     response = httpx.post(
         API,
         json={"query": query, "variables": variables},
-        headers={"Authorization": settings.linear_api_key, "Content-Type": "application/json"},
+        headers={"Authorization": token, "Content-Type": "application/json"},
         timeout=TIMEOUT,
     )
     response.raise_for_status()

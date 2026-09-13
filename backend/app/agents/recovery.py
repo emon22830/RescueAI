@@ -49,7 +49,7 @@ def run(state: AgentState) -> dict:
         }
 
     plan = llm.ask_for(_RecoveryPlan, SYSTEM, _build_prompt(state, findings))
-    actions = [_to_action(step, findings) for step in plan.steps]
+    actions = [_to_action(step, findings, state["project_id"]) for step in plan.steps]
 
     return {
         "plan": actions,
@@ -74,11 +74,12 @@ def _build_prompt(state: AgentState, findings: list[Finding]) -> str:
     return "\n".join(lines)
 
 
-def _to_action(step: _PlanStep, findings: list[Finding]) -> PlannedAction:
+def _to_action(step: _PlanStep, findings: list[Finding], project_id: str) -> PlannedAction:
     """The reason is the finding's own title, never the model's retelling of it."""
     index = step.finding_index
     reason = findings[index].title if 0 <= index < len(findings) else ""
     return PlannedAction(
+        project_id=project_id,
         integration=step.integration,
         type=step.type,
         description=step.description,

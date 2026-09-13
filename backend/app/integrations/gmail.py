@@ -19,29 +19,32 @@ MAX_EMAILS = 25
 MAX_BODY_CHARS = 4000
 
 
-def collect_evidence(project_name: str) -> list[Evidence]:
+def collect_evidence(project_id: str, project_name: str) -> list[Evidence]:
     """Recent mail that mentions the project — the stakeholder side of the story."""
-    if not google_auth.is_connected():
-        logger.warning("Gmail skipped: GOOGLE_* variables are empty in backend/.env")
+    if not google_auth.is_connected(project_id):
+        logger.warning("Gmail skipped: this project has not connected Google")
         return []
 
     query = f"{project_name} newer_than:{LOOKBACK_DAYS}d -in:spam -in:trash"
-    return [_to_evidence(fetch_message(message_id)) for message_id in search_messages(query)]
+    return [
+        _to_evidence(fetch_message(project_id, message_id))
+        for message_id in search_messages(project_id, query)
+    ]
 
 
-def search_messages(query: str) -> list[str]:
+def search_messages(project_id: str, query: str) -> list[str]:
     """Message ids matching a Gmail search query, newest first."""
-    body = _get("/messages", {"q": query, "maxResults": MAX_EMAILS})
+    body = _get(project_id, "/messages", {"q": query, "maxResults": MAX_EMAILS})
     return [message["id"] for message in body.get("messages", [])]
 
 
-def fetch_message(message_id: str) -> dict:
+def fetch_message(project_id: str, message_id: str) -> dict:
     """One full message: headers, body parts and all."""
-    return _get(f"/messages/{message_id}", {"format": "full"})
+    return _get(project_id, f"/messages/{message_id}", {"format": "full"})
 
 
-def send_email(to: str, subject: str, body: str) -> str:
-    """Send mail as the connected account. Returns the new message id."""
+def send_email(project_id: str, to: str, subject: str, body: str) -> str:
+    """Send mail as this project's connected account. Returns the new message id."""
     message = EmailMessage()
     message["To"] = to
     message["Subject"] = subject
@@ -51,7 +54,7 @@ def send_email(to: str, subject: str, body: str) -> str:
     response = httpx.post(
         f"{API}/messages/send",
         json={"raw": raw},
-        headers=google_auth.headers(),
+        headers=google_auth.headers(project_id),
         timeout=TIMEOUT,
     )
     response.raise_for_status()
@@ -73,7 +76,7 @@ def execute_action(action: PlannedAction) -> str:
         raise ValueError("Gmail send_email needs a target (recipient) and params.value (body)")
 
     subject = action.params.get("subject") or action.description
-    message_id = send_email(to, subject, body)
+    message_id = send_email(action.project_id, to, subject, body)
     return f'Emailed {to} — subject "{subject}" (Gmail id {message_id})'
 
 
@@ -129,7 +132,9 @@ def _sent_at(message: dict) -> str | None:
     return datetime.fromtimestamp(int(internal) / 1000, tz=UTC).isoformat()
 
 
-def _get(path: str, params: dict) -> dict:
-    response = httpx.get(f"{API}{path}", params=params, headers=google_auth.headers(), timeout=TIMEOUT)
+def _get(project_id: str, path: str, params: dict) -> dict:
+    response = httpx.get(
+        f"{API}{path}", params=params, headers=google_auth.headers(project_id), timeout=TIMEOUT
+    )
     response.raise_for_status()
     return response.json()

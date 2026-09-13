@@ -17,7 +17,7 @@ These versions are installed and verified. Do not change one without an ADR.
 | uvicorn[standard] | 0.52.4 | server |
 | pydantic-settings | 2.15.0 | env config |
 | langgraph | 1.2.11 | agent orchestration |
-| anthropic | 1.5.0 | LLM |
+| google-genai | 2.23.0 | LLM |
 | supabase | 2.31.0 | database |
 | pytest | — | tests |
 | httpx | — | integration HTTP calls |
@@ -37,11 +37,13 @@ Tailwind 4 has no `tailwind.config.js`. It is wired as a Vite plugin, and
 
 ## LLM
 
-`claude-opus-5` via `client.messages.parse(output_format=PydanticModel)`.
-Configured by `LLM_MODEL` in `.env`.
+`gemini-3.8-flash` via
+`generate_content(config=GenerateContentConfig(response_schema=PydanticModel))`, read back
+from `response.parsed`. Configured by `LLM_MODEL` in `.env`. See [[adr-0013]].
 
-Do not use `budget_tokens` or `temperature` — both are rejected on this model. Depth is
-controlled by `output_config: {effort: ...}` if it is ever needed.
+Thinking tokens are drawn from `max_output_tokens`, so `llm.py` caps `thinking_budget` to
+leave room for the answer. `response.parsed` is `None` — not an exception — when the model
+returns nothing usable, which is why `ask_for` raises `LLMError`.
 
 ## Adding a dependency
 

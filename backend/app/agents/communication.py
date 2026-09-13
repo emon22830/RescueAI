@@ -8,6 +8,7 @@ from app.integrations import gmail, slack
 def run(state: AgentState) -> dict:
     return supervisor.investigate(
         "communication",
+        state["project_id"],
         state["project_name"],
         {"slack": slack.collect_evidence, "gmail": gmail.collect_evidence},
     )

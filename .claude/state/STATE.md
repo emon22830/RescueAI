@@ -69,7 +69,7 @@ next work is credentials, one app at a time, starting with Supabase itself.
 
 ```bash
 # backend  → http://localhost:8000
-cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000
+cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000 --host ::
 cd backend && .venv/bin/python -m pytest tests -q
 
 # frontend → http://localhost:5173

@@ -3,9 +3,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth import CurrentUser, get_current_user
 from app.config import ConfigurationError
 from app.main import app
 from app.projects import service
+from tests.conftest import OWNER_ID
 
 
 def create_project(client: TestClient) -> dict:
@@ -60,6 +62,22 @@ def test_unknown_project_is_404(client: TestClient):
     assert "does-not-exist" in response.json()["detail"]
 
 
+def test_delete_project_removes_it(client: TestClient):
+    created = create_project(client)
+
+    response = client.delete(f"/projects/{created['id']}")
+
+    assert response.status_code == 204
+    assert client.get(f"/projects/{created['id']}").status_code == 404
+    assert created["id"] not in [project["id"] for project in client.get("/projects").json()]
+
+
+def test_deleting_an_unknown_project_is_404(client: TestClient):
+    response = client.delete("/projects/does-not-exist")
+
+    assert response.status_code == 404
+
+
 @pytest.mark.parametrize(
     "body",
     [{"name": "", "goal": "Launch"}, {"name": "Launch"}, {}],
@@ -97,7 +115,11 @@ def test_missing_configuration_is_503(monkeypatch):
         raise ConfigurationError("Missing environment variable(s): SUPABASE_URL.")
 
     monkeypatch.setattr(service, "get_db", unconfigured)
-    response = TestClient(app, raise_server_exceptions=False).get("/projects")
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(OWNER_ID, None)
+    try:
+        response = TestClient(app, raise_server_exceptions=False).get("/projects")
+    finally:
+        app.dependency_overrides.clear()
 
     assert response.status_code == 503
     assert "SUPABASE_URL" in response.json()["detail"]

@@ -210,3 +210,67 @@ list now means one thing only: this project exists and has nothing to show yet.
 **Consequence.** One extra cheap `select id` per read. Worth it — the frontend can tell
 "nothing found yet" from "you are looking at a project that does not exist", and so can
 anyone debugging with curl.
+
+---
+
+## ADR-0013 — Gemini replaces Claude as the LLM, at the same single boundary
+**2026-09-14 · active**
+
+**Context.** The project needs an LLM for exactly two nodes, `risk` and `recovery`, and
+this is a hackathon with no budget. The Anthropic API has no free tier; the Gemini API
+does. The locked stack named `anthropic 1.5.0` and `claude-opus-5`.
+
+**Decision.** `google-genai` replaces `anthropic`, and `gemini-3.8-flash` replaces
+`claude-opus-5` as the `LLM_MODEL` default. The credential is `GEMINI_API_KEY`. The swap
+touches `app/ai/llm.py` and nothing else in the application: `ask` and `ask_for` keep
+their exact signatures, so `risk.py` and `recovery.py` are unchanged, and the 60 tests
+passed with `anthropic` uninstalled from the venv.
+
+**Consequence.** Structured output moves from `client.messages.parse(output_format=...)`
+to `generate_content(config=GenerateContentConfig(response_schema=...))`, which returns
+the same validated Pydantic object via `response.parsed`. Two Gemini-specific hazards are
+handled in `llm.py`: thinking tokens are drawn from the output budget, so
+`thinking_budget` is capped to leave room for the answer; and `response.parsed` is `None`
+rather than an exception when the model returns nothing usable, so `ask_for` raises
+`LLMError` and the run is recorded as failed instead of silently producing no findings.
+
+The free tier has real rate limits, and the graph makes two LLM calls per analysis. A
+demo that re-analyzes repeatedly can hit them. If that becomes a problem the answer is a
+paid key or a smaller model, not caching — a cached analysis is a lie about the present.
+
+**This ADR is what authorizes the change to the locked stack in `02-stack.md`.**
+
+---
+
+## ADR-0014 — Google is granted per project, not configured per deployment
+**2026-09-14 · active**
+
+**Context.** Slack, Linear and GitHub moved to per-project credentials, but Gmail, Drive
+and Calendar stayed on one `GOOGLE_REFRESH_TOKEN` in `backend/.env` — deferred as
+"Phase 2". That is a shared mailbox: every project in the deployment read the same
+Gmail, and a second customer would have read the first one's mail. For a product where
+each project is somebody else's workspace, that is not a deferral, it is a data leak.
+
+**Decision.** `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` stay in `.env` — they
+identify the *application* to Google, the same way the Supabase Auth Google provider is
+configured once. `GOOGLE_REFRESH_TOKEN` is deleted. Each project grants its own access
+through a consent flow started from its Connections page, and the refresh token it gets
+back is Fernet-encrypted into the same `integrations` table the token apps use.
+
+One row, `provider = 'google'`, serves all three apps: Gmail, Drive and Calendar are
+three APIs behind a single Google consent, so three rows would mean three things to
+revoke and three ways to disagree.
+
+**Consequence.** `collect_evidence(project_id, project_name)` is now genuinely uniform
+across all six integrations — the `# noqa: project_id unused` markers are gone, and
+`google_auth` caches an access token per project instead of one globally.
+
+The consent round trip leaves the app, so the callback cannot carry a bearer token. It
+proves itself with a Fernet-signed `state` carrying the project and owner, expiring in
+ten minutes; `security.py` remains the only file that touches Fernet. `access_type=
+offline` with `prompt=consent` is mandatory on the authorize URL — without both, a user
+who has already consented gets no refresh token and the connection dies silently an hour
+later.
+
+Cost: connecting Google is now a redirect, not a form, and `BACKEND_URL` must match the
+redirect URI registered on the OAuth client exactly or Google refuses the round trip.

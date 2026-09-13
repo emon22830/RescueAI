@@ -6,10 +6,11 @@ plain request: the approved actions run in it and come back with their results.
 
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.agents.state import ActionStatus, Source
+from app.auth import CurrentUser, get_current_user
 from app.projects import service
 
 router = APIRouter(prefix="/projects/{project_id}/actions", tags=["actions"])
@@ -36,11 +37,13 @@ class ApproveActionsRequest(BaseModel):
 
 
 @router.get("", response_model=list[ActionResponse])
-def get_actions(project_id: str) -> list[dict]:
-    return service.get_actions(project_id)
+def get_actions(project_id: str, user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    return service.get_actions(project_id, user.id)
 
 
 @router.post("/approve", response_model=list[ActionResponse])
-def approve_actions(project_id: str, body: ApproveActionsRequest) -> list[dict]:
+def approve_actions(
+    project_id: str, body: ApproveActionsRequest, user: CurrentUser = Depends(get_current_user)
+) -> list[dict]:
     """Approve the given actions and execute them. Anything not pending is skipped."""
-    return service.approve_actions(project_id, body.action_ids)
+    return service.approve_actions(project_id, user.id, body.action_ids)

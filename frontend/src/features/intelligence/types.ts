@@ -40,3 +40,21 @@ export interface Action {
   approved_at: string | null
   executed_at: string | null
 }
+
+/** Why the answer reads the way it does. `chat` is a hello or a question about the
+ *  agent itself — not a hole in the evidence, so it is never flagged as one. */
+export type AnswerKind = 'answer' | 'gap' | 'chat'
+
+/** One answer from `POST /projects/{id}/ask`.
+ *  `answered` is false when the collected evidence could not answer the question — the
+ *  UI says so rather than presenting a guess as an answer. */
+export interface Answer {
+  question: string
+  /** Markdown: bold, inline code, bullets and one level of heading. */
+  answer: string
+  answered: boolean
+  kind: AnswerKind
+  /** Up to three questions the same evidence could answer next. */
+  follow_ups: string[]
+  evidence: Evidence[]
+}

@@ -4,7 +4,33 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <meta
+      name="description"
+      content="RescueAI reconstructs the real state of a project from Slack, Gmail, Drive, Linear, GitHub and Calendar — names the blockers with the evidence attached, and drafts a recovery plan you approve."
+    />
+    <title>RescueAI</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Applies the saved theme before first paint. Without this the app flashes light. -->
+    <script>
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('rescue-theme')
+          var dark =
+            saved === 'dark' ||
+            (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.classList.toggle('dark', dark)
+        } catch (error) {
+          /* private mode — light is a fine default */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

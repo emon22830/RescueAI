@@ -30,7 +30,7 @@ You review. You do not edit.
 4. **Over-engineering.** A new abstraction, layer, manager, or generic helper is a
    finding. So is a dependency nothing imports.
 
-5. **Layer violations.** `get_db()` outside the service, `anthropic` outside `llm.py`,
+5. **Layer violations.** `get_db()` outside the service, the LLM SDK outside `llm.py`,
    `fetch` outside `api.ts`, an environment variable read outside `config.py`.
 
 6. **Evidence integrity.** Findings must cite indexes mapped back to real objects.

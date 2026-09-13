@@ -1,4 +1,9 @@
-"""Slack. Reads project evidence; write actions live in execute_action()."""
+"""Slack. Reads project evidence; write actions live in execute_action().
+
+Each project connects its own bot token from the frontend (see projects/service.py
+connect_integration), so every function here takes the token explicitly rather than
+reading one shared value off app.config.settings.
+"""
 
 import logging
 import re
@@ -7,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.agents.state import Evidence, PlannedAction
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -22,23 +26,29 @@ class SlackError(RuntimeError):
     """Slack answers 200 with ok=false — the reason is in the body, not the status."""
 
 
-def collect_evidence(project_name: str) -> list[Evidence]:
+def collect_evidence(project_id: str, project_name: str) -> list[Evidence]:
     """The most recent messages about this project, newest first.
 
     A message counts when it names the project, or when it sits in a channel
     named after the project — a whole #saas-product-launch channel is about it.
     """
-    if not settings.slack_bot_token:
-        logger.warning("Slack skipped: SLACK_BOT_TOKEN is empty in backend/.env")
+    from app.projects import service
+
+    credential = service.get_integration_credential(project_id, "slack")
+    if credential is None:
+        logger.warning("Slack skipped: project %s has not connected Slack", project_id)
         return []
 
-    authors = list_user_names()
+    token = credential["token"]
+    channel_ids = credential.get("channel_ids", "")
+
+    authors = list_user_names(token)
     oldest = (datetime.now(UTC) - timedelta(days=LOOKBACK_DAYS)).timestamp()
 
     matches: list[tuple[dict, dict]] = []
-    for channel in list_channels():
+    for channel in list_channels(token, channel_ids):
         channel_is_the_project = mentions_project(channel["name"], project_name)
-        for message in fetch_channel_messages(channel["id"], oldest):
+        for message in fetch_channel_messages(channel["id"], oldest, token):
             text = message.get("text", "").strip()
             if not text:
                 continue
@@ -49,24 +59,32 @@ def collect_evidence(project_name: str) -> list[Evidence]:
     return [_to_evidence(channel, message, authors) for channel, message in matches[:MAX_MESSAGES]]
 
 
-def list_channels() -> list[dict]:
-    """Channels the bot can read: the ones it was invited to, or SLACK_CHANNEL_IDS."""
-    scoped = [channel_id.strip() for channel_id in settings.slack_channel_ids.split(",") if channel_id.strip()]
+def verify_token(token: str, channel_ids: str = "") -> dict:
+    """Confirm the token actually works before it is stored. Called by the connect flow."""
+    body = _call("auth.test", {}, token)
+    return {"team": body.get("team", ""), "bot_user": body.get("user", "")}
+
+
+def list_channels(token: str, channel_ids: str = "") -> list[dict]:
+    """Channels the bot can read: the ones it was invited to, or a chosen subset."""
+    scoped = [channel_id.strip() for channel_id in channel_ids.split(",") if channel_id.strip()]
     if scoped:
-        return [_call("conversations.info", {"channel": channel_id})["channel"] for channel_id in scoped]
+        return [_call("conversations.info", {"channel": channel_id}, token)["channel"] for channel_id in scoped]
 
     body = _call(
         "users.conversations",
         {"types": "public_channel,private_channel", "exclude_archived": "true", "limit": 200},
+        token,
     )
     return body["channels"]
 
 
-def fetch_channel_messages(channel_id: str, oldest: float) -> list[dict]:
+def fetch_channel_messages(channel_id: str, oldest: float, token: str) -> list[dict]:
     """Real human messages in one channel since `oldest`, joins and file notices dropped."""
     body = _call(
         "conversations.history",
         {"channel": channel_id, "oldest": f"{oldest:.6f}", "limit": MESSAGES_PER_CHANNEL},
+        token,
     )
     return [
         message
@@ -75,14 +93,14 @@ def fetch_channel_messages(channel_id: str, oldest: float) -> list[dict]:
     ]
 
 
-def list_user_names() -> dict[str, str]:
+def list_user_names(token: str) -> dict[str, str]:
     """User id → display name, so a quote says who said it.
 
     Names are a nicety: if the token lacks users:read the evidence is still
     worth collecting, so this degrades to ids rather than failing the run.
     """
     try:
-        members = _call("users.list", {"limit": 500})["members"]
+        members = _call("users.list", {"limit": 500}, token)["members"]
     except SlackError as error:
         logger.warning("Slack user names unavailable, falling back to ids: %s", error)
         return {}
@@ -135,11 +153,11 @@ def _to_evidence(channel: dict, message: dict, authors: dict[str, str]) -> Evide
     )
 
 
-def _call(method: str, params: dict) -> dict:
+def _call(method: str, params: dict, token: str) -> dict:
     response = httpx.get(
         f"{API}/{method}",
         params=params,
-        headers={"Authorization": f"Bearer {settings.slack_bot_token}"},
+        headers={"Authorization": f"Bearer {token}"},
         timeout=TIMEOUT,
     )
     response.raise_for_status()

@@ -1,4 +1,4 @@
-# AI Project Rescue — agent context
+# RescueAI — agent context
 
 Read this file every session. Everything else is loaded on demand.
 
@@ -24,6 +24,7 @@ If it looks stale, trust the code and say so.
 ```
 backend/app/
   api/            HTTP endpoints
+  auth/           who is calling, and the keys protecting what they connected
   projects/       project business logic
   agents/         the LangGraph workflow and its nodes
   integrations/   one file per external app
@@ -44,7 +45,7 @@ frontend/src/
 - **Never fake integration data.** An unimplemented integration returns `[]`. Demo data
   lives in the real connected apps, not in our source.
 - **Nothing writes to an external app without human approval.**
-- **Only `ai/llm.py` imports `anthropic`.**
+- **Only `ai/llm.py` imports the LLM SDK (`google-genai`).**
 - **Secrets come from `backend/.env`.** Never commit one, never hardcode one.
 - Keep the system runnable after every change.
 
@@ -57,8 +58,10 @@ frontend/src/
 | `.claude/context/02-stack.md` | Adding a dependency or checking a version |
 | `.claude/context/03-schema.md` | Writing a query or changing a table |
 | `.claude/context/04-api-contracts.md` | Adding or changing an endpoint |
+| `backend/app/auth/README.md` | Anything about sign-in, sessions or ownership checks |
 | `.claude/rules/backend-rules.md` | Writing Python |
 | `.claude/rules/frontend-rules.md` | Writing React |
+| `.claude/rules/ui-design-rules.md` | Styling anything — colour, type, spacing, dark mode |
 | `.claude/rules/agent-rules.md` | Touching `app/agents/` |
 | `.claude/rules/integration-rules.md` | Writing an integration |
 | `.claude/skills/new-integration/SKILL.md` | Implementing a new external app |

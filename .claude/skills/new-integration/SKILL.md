@@ -1,6 +1,6 @@
 ---
 name: new-integration
-description: Implement one external app integration for AI Project Rescue — Slack, Gmail, Google Drive, Linear, GitHub or Google Calendar. Use when wiring a real API to collect evidence or execute an approved action.
+description: Implement one external app integration for RescueAI — Slack, Gmail, Google Drive, Linear, GitHub or Google Calendar. Use when wiring a real API to collect evidence or execute an approved action.
 ---
 
 # Adding an integration

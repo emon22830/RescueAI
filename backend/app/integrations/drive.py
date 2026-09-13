@@ -25,23 +25,27 @@ EXPORT_AS = {
 }
 
 
-def collect_evidence(project_name: str) -> list[Evidence]:
+def collect_evidence(project_id: str, project_name: str) -> list[Evidence]:
     """Specs and docs that mention the project, with their text read in.
 
     The text matters: a stale requirement only contradicts a Slack thread if the
     agent can read both.
     """
-    if not google_auth.is_connected():
-        logger.warning("Drive skipped: GOOGLE_* variables are empty in backend/.env")
+    if not google_auth.is_connected(project_id):
+        logger.warning("Drive skipped: this project has not connected Google")
         return []
 
-    return [_to_evidence(file, read_text(file)) for file in search_files(project_name)]
+    return [
+        _to_evidence(file, read_text(project_id, file))
+        for file in search_files(project_id, project_name)
+    ]
 
 
-def search_files(project_name: str) -> list[dict]:
+def search_files(project_id: str, project_name: str) -> list[dict]:
     """Files whose content or name mentions the project, most recently modified first."""
     escaped = project_name.replace("'", "\\'")
     body = _get(
+        project_id,
         "/files",
         {
             "q": f"fullText contains '{escaped}' and trashed = false",
@@ -53,7 +57,7 @@ def search_files(project_name: str) -> list[dict]:
     return body.get("files", [])
 
 
-def read_text(file: dict) -> str:
+def read_text(project_id: str, file: dict) -> str:
     """The readable text of a file: Google formats are exported, plain files downloaded.
 
     Anything else (a PDF, an image, a zip) has no text to give, so only its name
@@ -62,9 +66,9 @@ def read_text(file: dict) -> str:
     mime_type = file["mimeType"]
 
     if mime_type in EXPORT_AS:
-        response = _request(f"/files/{file['id']}/export", {"mimeType": EXPORT_AS[mime_type]})
+        response = _request(project_id, f"/files/{file['id']}/export", {"mimeType": EXPORT_AS[mime_type]})
     elif mime_type.startswith("text/") or mime_type == "application/json":
-        response = _request(f"/files/{file['id']}", {"alt": "media"})
+        response = _request(project_id, f"/files/{file['id']}", {"alt": "media"})
     else:
         return ""
 
@@ -99,15 +103,15 @@ def _to_evidence(file: dict, text: str) -> Evidence:
     )
 
 
-def _get(path: str, params: dict) -> dict:
-    return _request(path, params).json()
+def _get(project_id: str, path: str, params: dict) -> dict:
+    return _request(project_id, path, params).json()
 
 
-def _request(path: str, params: dict) -> httpx.Response:
+def _request(project_id: str, path: str, params: dict) -> httpx.Response:
     response = httpx.get(
         f"{API}{path}",
         params=params,
-        headers=google_auth.headers(),
+        headers=google_auth.headers(project_id),
         timeout=TIMEOUT,
         follow_redirects=True,
     )

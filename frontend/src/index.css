@@ -1,5 +1,190 @@
 @import "tailwindcss";
 
+/* Dark mode is a class on <html>, set by lib/theme.ts and by the script in index.html. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Palette. These are the only literal colours in the codebase — components use
+   the semantic names below and never write a `dark:` class for a surface.
+   Light and dark are two designs, not an inversion: surfaces get lighter as they
+   come forward in dark, darker as they come forward in light.
+--------------------------------------------------------------------------- */
+
+:root {
+  --canvas: #f6f8fc;
+  --surface: #ffffff;
+  --raised: #f5f7fb;
+  --line: #e6eaf2;
+  --line-strong: #d3dae8;
+
+  --ink: #0d1220;
+  --muted: #5a647a;
+  --faint: #8891a6;
+
+  --brand: #5b54f0;
+  --brand-hover: #4a43e2;
+  --brand-ink: #ffffff;
+  --brand-soft: #eeedff;
+  --brand-soft-ink: #4239cf;
+
+  /* The black call-to-action the marketing header and final CTA use. */
+  --contrast: #0b0d17;
+  --contrast-hover: #1b1f2e;
+  --contrast-ink: #ffffff;
+
+  --danger: #d5343a;
+  --danger-soft: #fdeaea;
+  --warn: #b45a00;
+  --warn-soft: #fdf2e2;
+  --success: #0e8a58;
+  --success-soft: #e5f6ee;
+
+  /* Marketing hero. Layered soft gradients standing in for the template's sky. */
+  --sky-top: #cfe0fa;
+  --sky-mid: #eaf1fd;
+
+  --elevation-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -14px rgb(15 23 42 / 0.12);
+  --elevation-lift: 0 1px 3px rgb(15 23 42 / 0.06), 0 14px 34px -16px rgb(15 23 42 / 0.2);
+  --elevation-float: 0 2px 6px rgb(13 18 32 / 0.05), 0 24px 60px -28px rgb(13 18 32 / 0.3);
+}
+
+.dark {
+  --canvas: #080b14;
+  --surface: #10141f;
+  --raised: #171c2a;
+  --line: #222839;
+  --line-strong: #333b50;
+
+  --ink: #e9edf6;
+  --muted: #99a3ba;
+  --faint: #6e7890;
+
+  --brand: #7c76ff;
+  --brand-hover: #928dff;
+  --brand-ink: #0a0c16;
+  --brand-soft: #1d1d43;
+  --brand-soft-ink: #b3aeff;
+
+  /* In dark the loud button inverts: white on near-black would vanish. */
+  --contrast: #f3f5fa;
+  --contrast-hover: #ffffff;
+  --contrast-ink: #0b0d17;
+
+  --danger: #ff6f74;
+  --danger-soft: #351619;
+  --warn: #f0a747;
+  --warn-soft: #35260f;
+  --success: #45d39a;
+  --success-soft: #0e2c22;
+
+  --sky-top: #1c2550;
+  --sky-mid: #0c1020;
+
+  --elevation-card: 0 1px 2px rgb(0 0 0 / 0.4);
+  --elevation-lift: 0 1px 3px rgb(0 0 0 / 0.5), 0 14px 34px -18px rgb(0 0 0 / 0.7);
+  --elevation-float: 0 2px 6px rgb(0 0 0 / 0.5), 0 24px 60px -28px rgb(0 0 0 / 0.9);
+}
+
+/* `inline` keeps the var reference in the generated CSS, so `bg-surface` follows
+   the theme instead of being baked to whatever :root held at build time. */
+@theme inline {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-soft-ink: var(--brand-soft-ink);
+
+  --color-contrast: var(--contrast);
+  --color-contrast-hover: var(--contrast-hover);
+  --color-contrast-ink: var(--contrast-ink);
+
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+
+  --shadow-card: var(--elevation-card);
+  --shadow-lift: var(--elevation-lift);
+  --shadow-float: var(--elevation-float);
+}
+
+/* --------------------------------------------------------------------------- */
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply bg-canvas font-sans text-sm text-ink antialiased;
+}
+
+::selection {
+  background-color: var(--brand-soft);
+  color: var(--brand-soft-ink);
+}
+
+/* In the base layer, so a field that draws its own focus treatment can opt out with
+   `focus:outline-none`. Unlayered, this rule beat every utility and a focused input
+   ended up wearing two rings. The outline follows the element's own radius — never
+   force one here, or a focused pill turns square. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+}
+
+/* The marketing hero's sky. Three soft radials over a vertical wash — the only
+   gradient in the codebase, and it never appears on an application surface. */
+.hero-sky {
+  /* Sized in percentages, not rem, so the same wash reads correctly on a tall hero and
+     on a short band. The old version used fixed-rem radials, which held their size while
+     the section changed around them and broke into visible blobs. */
+  background:
+    radial-gradient(125% 70% at 50% 0%, var(--sky-top) 0%, transparent 68%),
+    linear-gradient(180deg, var(--sky-mid) 0%, var(--canvas) 100%);
+}
+
+/* The only two animations in the app: a spinner, and a step that is running now. */
+@keyframes rescue-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes rescue-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.animate-rescue-spin {
+  animation: rescue-spin 0.7s linear infinite;
+}
+
+.animate-rescue-pulse {
+  animation: rescue-pulse 1.6s ease-in-out infinite;
 }

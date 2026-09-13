@@ -19,23 +19,24 @@ MAX_EVENTS = 25
 DEFAULT_MEETING_MINUTES = 30
 
 
-def collect_evidence(project_name: str) -> list[Evidence]:
+def collect_evidence(project_id: str, project_name: str) -> list[Evidence]:
     """Meetings and deadlines for this project — everything ahead, plus the week just gone.
 
     The recent past is included on purpose: a kickoff that happened and a review
     that never got booked are both worth knowing about.
     """
-    if not google_auth.is_connected():
-        logger.warning("Calendar skipped: GOOGLE_* variables are empty in backend/.env")
+    if not google_auth.is_connected(project_id):
+        logger.warning("Calendar skipped: this project has not connected Google")
         return []
 
-    return [_to_evidence(event) for event in upcoming_events(project_name)]
+    return [_to_evidence(event) for event in upcoming_events(project_id, project_name)]
 
 
-def upcoming_events(project_name: str) -> list[dict]:
+def upcoming_events(project_id: str, project_name: str) -> list[dict]:
     """Events matching the project name, recurring ones expanded, earliest first."""
     now = datetime.now(UTC)
     body = _get(
+        project_id,
         f"/{settings.google_calendar_id}/events",
         {
             "q": project_name,
@@ -50,6 +51,7 @@ def upcoming_events(project_name: str) -> list[dict]:
 
 
 def create_event(
+    project_id: str,
     summary: str,
     description: str,
     attendees: list[str],
@@ -67,7 +69,7 @@ def create_event(
             "end": {"dateTime": (start + timedelta(minutes=minutes)).isoformat()},
             "attendees": [{"email": email} for email in attendees],
         },
-        headers=google_auth.headers(),
+        headers=google_auth.headers(project_id),
         timeout=TIMEOUT,
     )
     response.raise_for_status()
@@ -93,6 +95,7 @@ def execute_action(action: PlannedAction) -> str:
     minutes = int(action.params.get("minutes", DEFAULT_MEETING_MINUTES))
 
     event = create_event(
+        project_id=action.project_id,
         summary=purpose.splitlines()[0][:120],
         description=f"{action.description}\n\n{purpose}",
         attendees=attendees,
@@ -156,7 +159,9 @@ def _when(marker: dict) -> str | None:
     return marker.get("dateTime") or marker.get("date")
 
 
-def _get(path: str, params: dict) -> dict:
-    response = httpx.get(f"{API}{path}", params=params, headers=google_auth.headers(), timeout=TIMEOUT)
+def _get(project_id: str, path: str, params: dict) -> dict:
+    response = httpx.get(
+        f"{API}{path}", params=params, headers=google_auth.headers(project_id), timeout=TIMEOUT
+    )
     response.raise_for_status()
     return response.json()
