@@ -99,10 +99,44 @@ https://rescueai-xkhy.onrender.com/integrations/google/callback
 Without both entries in the redirect list, a sign-in started on one environment bounces
 back to whichever URL is set as Site URL, regardless of where the user actually is.
 
+## CI, and gating the deploy
+
+`.github/workflows/ci.yml` runs on every push and pull request to `main`: backend tests
+(no secrets — `conftest.py` swaps Supabase for `tests/fake_db.py`), then the frontend
+lint, type-check and build, then a check that the built bundle still contains the app.
+
+That last check exists because of a failure mode worth knowing about. `supabaseClient.ts`
+throws at module top level when `VITE_SUPABASE_URL` or `VITE_SUPABASE_ANON_KEY` is
+missing. A production build replaces `import.meta.env.VITE_*` with `undefined` before
+minifying, so that throw becomes provably unconditional and **everything downstream of
+it is dead code** — the entire app tree-shakes away. The build exits 0 and prints a
+healthy-looking bundle about a third the normal size (262 kB instead of 581 kB), and
+what deploys is a white screen. `vite.config.ts` now refuses to build without those two
+variables; the bundle check in CI is the second line of defence.
+
+**As it stands, CI does not gate anything.** Render and Vercel each redeploy on their
+own when `main` moves, in parallel with these checks, so a red build still ships. Making
+the gate real is two changes per service, and both halves matter — adding the hook
+without turning off auto-deploy just deploys everything twice:
+
+1. **Render** → service → Settings → Build & Deploy: set *Auto-Deploy* to **No**, then
+   create a *Deploy Hook* and save the URL as the repository secret
+   `RENDER_DEPLOY_HOOK_URL`.
+2. **Vercel** → project → Settings → Git: turn off automatic deployments for `main`,
+   then create a Deploy Hook and save it as `VERCEL_DEPLOY_HOOK_URL`.
+
+Repository secrets live under Settings → Secrets and variables → Actions. The `deploy`
+job already reads both and skips whichever is absent, so nothing changes until you add
+them.
+
 ## Verifying a deploy
 
 ```bash
-curl https://rescueai-xkhy.onrender.com/health        # {"status":"ok"}
+# {"status":"ok","version":"0.5.0","commit":"6a6217e"} — `commit` is the build that is
+# actually answering, so it is how you tell a deploy that landed from one still rolling
+# out. It comes from RENDER_GIT_COMMIT, which Render sets and nothing else does, so a
+# local run says "local".
+curl https://rescueai-xkhy.onrender.com/health
 
 # /health passes even when CORS is wrong, and then every screen in the app reads as
 # "could not reach the backend". This is the check that catches it — a 200 with an
