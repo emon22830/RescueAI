@@ -52,6 +52,10 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
+    test: {
+      // api.ts reads window.location.origin when it cannot reach the backend.
+      environment: 'jsdom',
+    },
     server: {
       proxy: {
         // '/projects' also covers '/projects/{id}/integrations'.
