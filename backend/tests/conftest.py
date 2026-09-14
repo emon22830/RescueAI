@@ -2,6 +2,7 @@ import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
+import app.auth.dependencies as auth_dependencies
 from app.auth import CurrentUser, get_current_user
 from app.config import settings
 from app.main import app
@@ -11,6 +12,16 @@ from tests.fake_db import FakeDatabase
 # The user every `client` fixture request is signed in as, unless a test overrides
 # get_current_user itself (see test_auth.py for the real verification path).
 OWNER_ID = "11111111-1111-1111-1111-111111111111"
+
+
+@pytest.fixture(autouse=True)
+def forget_verified_tokens():
+    """A verified token is remembered for a minute so one page load is not seven round
+    trips to Supabase Auth. That memory is process-wide, so a test must never inherit
+    another test's answer for the same token string."""
+    auth_dependencies._verified.clear()
+    yield
+    auth_dependencies._verified.clear()
 
 
 @pytest.fixture(autouse=True)

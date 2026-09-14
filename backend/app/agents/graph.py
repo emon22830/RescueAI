@@ -6,10 +6,12 @@
         ├── delivery       (Linear, Jira, Asana, Trello)
         └── requirements   (Drive, Notion, Calendar)
                 ↓
-              risk  ──►  recovery
+              risk
 
 The four investigation agents run in parallel and each append to state["evidence"]
-and state["agent_activity"]. Risk waits for all of them before it runs.
+and state["agent_activity"]. Risk waits for all of them before it runs, and produces
+the findings, the project state and the recovery plan in a single model call — see
+`risk.py` for why that is one call and not two.
 
 `engineering` and `delivery` are deliberately separate: what a team built and what its
 plan says are different questions, and the gap between them is most of what this
@@ -24,7 +26,6 @@ from app.agents import (
     communication,
     delivery,
     engineering,
-    recovery,
     requirements,
     risk,
     supervisor,
@@ -45,7 +46,6 @@ def get_analysis_graph():
 
     graph.add_node("supervisor", supervisor.run)
     graph.add_node("risk", risk.run)
-    graph.add_node("recovery", recovery.run)
     for name, node in INVESTIGATORS.items():
         graph.add_node(name, node)
 
@@ -53,8 +53,7 @@ def get_analysis_graph():
     for name in INVESTIGATORS:
         graph.add_edge("supervisor", name)
         graph.add_edge(name, "risk")
-    graph.add_edge("risk", "recovery")
-    graph.add_edge("recovery", END)
+    graph.add_edge("risk", END)
 
     return graph.compile()
 

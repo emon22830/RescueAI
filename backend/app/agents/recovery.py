@@ -1,14 +1,22 @@
-"""Turns findings into a concrete recovery plan.
+"""The plan half of the analysis: what to do about what the risk agent found.
 
-The plan is never executed here — it is saved as pending actions and waits
-for the user to approve it.
+Not a node. This was a second LLM call until the free-tier quota made the cost of that
+visible — it re-sent the project, the findings and every cited evidence title to ask a
+question the model had the evidence for the first time. Naming a blocker and saying how
+to unblock it is one judgement anyway, so `risk` now asks for both in one request.
+
+What stays here is the half of that request this file owns: the menu of what can
+actually be run, the rules for choosing from it, the shape a step comes back in, and
+the mapping from a step to a `PlannedAction`.
+
+The plan is never executed here. It is saved as pending actions and waits for the user
+to approve it.
 """
 
 from pydantic import BaseModel
 
 from app.agents import executor
-from app.agents.state import AgentState, Finding, PlannedAction, Source, activity
-from app.ai import llm
+from app.agents.state import Finding, PlannedAction, Source
 
 
 def _action_menu() -> str:
@@ -21,14 +29,16 @@ def _action_menu() -> str:
     )
 
 
-SYSTEM = f"""You are a delivery lead writing a recovery plan for a project that is at risk.
+PLAN_RULES = f"""Then write the recovery plan: the steps that address what you just found.
 
 Each step must be a single concrete action of one of these types:
 {_action_menu()}
 
 Rules:
-- Every step must address exactly one of the findings you were given. Cite it by index.
-  No generic project advice, and no step for a problem nobody found.
+- Every step must address exactly one of the findings you wrote above. Cite its index in
+  `finding_index`. No generic project advice, and no step for a problem nobody found.
+- Return no steps at all when you found nothing. An empty plan is a valid answer, and a
+  plan for a problem you invented is worse than no plan.
 - The description says what will happen and why that unblocks the finding, naming the
   people, issues and dates from the evidence rather than speaking in general terms.
 - Order the steps so the most urgent blocker is unblocked first.
@@ -40,7 +50,7 @@ Rules:
 - Keep the plan short. Four or five steps is usually enough."""
 
 
-class _PlanParam(BaseModel):
+class PlanParam(BaseModel):
     """One optional extra a step needs — team, assignee, due_date, subject, start.
 
     A list of name/value pairs rather than a dict. A dict of arbitrary keys becomes an
@@ -53,55 +63,17 @@ class _PlanParam(BaseModel):
     value: str
 
 
-class _PlanStep(BaseModel):
+class PlanStep(BaseModel):
     integration: Source
     type: str
     description: str
     target: str
     value: str
-    params: list[_PlanParam] = []
+    params: list[PlanParam] = []
     finding_index: int
 
 
-class _RecoveryPlan(BaseModel):
-    steps: list[_PlanStep]
-
-
-def run(state: AgentState) -> dict:
-    findings = state["findings"]
-    if not findings:
-        return {
-            "plan": [],
-            "agent_activity": [activity("recovery", "ok", "No findings — no plan needed")],
-        }
-
-    plan = llm.ask_for(_RecoveryPlan, SYSTEM, _build_prompt(state, findings))
-    actions = [_to_action(step, findings, state["project_id"]) for step in plan.steps]
-
-    return {
-        "plan": actions,
-        "agent_activity": [
-            activity("recovery", "ok", f"{len(actions)} actions proposed, awaiting approval")
-        ],
-    }
-
-
-def _build_prompt(state: AgentState, findings: list[Finding]) -> str:
-    lines = [
-        f"PROJECT: {state['project_name']}",
-        f"GOAL: {state['project_goal']}",
-        "",
-        "FINDINGS:",
-    ]
-    for index, finding in enumerate(findings):
-        lines.append(f"[{index}] [{finding.severity.upper()}] {finding.title}")
-        lines.append(f"    {finding.description}")
-        for item in finding.evidence:
-            lines.append(f"    evidence: {item.source} · {item.title}")
-    return "\n".join(lines)
-
-
-def _to_action(step: _PlanStep, findings: list[Finding], project_id: str) -> PlannedAction:
+def to_action(step: PlanStep, findings: list[Finding], project_id: str) -> PlannedAction:
     """The reason is the finding's own title, never the model's retelling of it."""
     index = step.finding_index
     reason = findings[index].title if 0 <= index < len(findings) else ""

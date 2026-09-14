@@ -9,12 +9,13 @@ failed at the node that had never been exercised for real.
 
 import pytest
 
-from app.agents.recovery import _RecoveryPlan
-from app.agents.risk import _RiskReport
+from app.agents.risk import _Analysis
 from app.projects.service import _Answer
 
-# Every model passed to llm.ask_for anywhere in the app.
-SCHEMAS = [("_RiskReport", _RiskReport), ("_RecoveryPlan", _RecoveryPlan), ("_Answer", _Answer)]
+# Every model passed to llm.ask_for anywhere in the app. `_Analysis` carries the plan
+# steps too, since the findings and the plan are now one request — so the nested
+# PlanStep/PlanParam shapes are still covered here, which is the point.
+SCHEMAS = [("_Analysis", _Analysis), ("_Answer", _Answer)]
 
 
 def keys_in(node, key: str, path: str = "$") -> list[str]:

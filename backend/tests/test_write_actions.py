@@ -275,7 +275,7 @@ def test_a_type_missing_from_an_integration_is_caught(sent, all_apps_connected):
 
 
 def test_the_recovery_prompt_offers_exactly_what_can_be_run():
-    from app.agents import executor, recovery
+    from app.agents import executor, risk
 
     for entry in executor.ACTION_TYPES:
-        assert f"{entry.integration} / {entry.type}" in recovery.SYSTEM
+        assert f"{entry.integration} / {entry.type}" in risk.SYSTEM

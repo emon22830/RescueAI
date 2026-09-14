@@ -49,18 +49,35 @@ export function ProjectPage() {
   const [executing, setExecuting] = useState<string[]>([])
   const [selected, setSelected] = useState<string[]>([])
 
+  // Four independent requests, so one failing must not cost the other three. Promise.all
+  // rejects on the first failure and left `project` null, which rendered the whole page
+  // as "Project unavailable" — the wrong story when the project itself loaded fine and
+  // it was the run history that did not. The project is the only one the page cannot do
+  // without; the rest keep what they have and the failure is reported above them.
   const load = useCallback(async () => {
-    const [loadedProject, loadedFindings, loadedActions, loadedRuns] = await Promise.all([
+    const [loadedProject, loadedFindings, loadedActions, loadedRuns] = await Promise.allSettled([
       api.getProject(projectId),
       api.getFindings(projectId),
       api.getActions(projectId),
       api.getRuns(projectId),
     ])
-    setProject(loadedProject)
-    setFindings(loadedFindings)
-    setActions(loadedActions)
-    setRuns(loadedRuns)
-    setSelected(loadedActions.filter((action) => action.status === 'pending').map((a) => a.id))
+
+    if (loadedProject.status === 'rejected') throw loadedProject.reason
+    setProject(loadedProject.value)
+
+    if (loadedFindings.status === 'fulfilled') setFindings(loadedFindings.value)
+    if (loadedRuns.status === 'fulfilled') setRuns(loadedRuns.value)
+    if (loadedActions.status === 'fulfilled') {
+      setActions(loadedActions.value)
+      setSelected(
+        loadedActions.value.filter((action) => action.status === 'pending').map((a) => a.id),
+      )
+    }
+
+    const failed = [loadedFindings, loadedActions, loadedRuns].find(
+      (result) => result.status === 'rejected',
+    )
+    if (failed?.status === 'rejected') throw failed.reason
   }, [projectId])
 
   useEffect(() => {

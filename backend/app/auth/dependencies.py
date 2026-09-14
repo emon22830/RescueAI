@@ -12,6 +12,8 @@ Postgres. That means every route that touches a project must depend on `get_curr
 and every service function must be given the resulting user id to check against.
 """
 
+import threading
+import time
 from dataclasses import dataclass
 
 from fastapi import Security
@@ -40,6 +42,43 @@ class CurrentUser:
     email: str | None
 
 
+# Verifying a token is a network round trip to Supabase Auth, and one screen opens
+# seven requests at once — so an unremembered answer costs seven hops before any of
+# them has looked at a project. The same token verifies to the same user for the life
+# of that token, so the answer is held briefly.
+#
+# The window is deliberately short. A Supabase access token is a JWT that stays valid
+# for an hour on its own terms, so remembering a good one for a minute does not extend
+# anyone's access — it only stops us asking the same question seven times a second.
+# Only successes are remembered: a rejection must be re-asked every time, so a session
+# that has just been renewed is never told it is still invalid.
+_VERIFIED_FOR_SECONDS = 60
+
+_verified: dict[str, tuple[float, CurrentUser]] = {}
+_verified_lock = threading.Lock()
+
+
+def _remembered(token: str) -> CurrentUser | None:
+    with _verified_lock:
+        entry = _verified.get(token)
+        if entry is None:
+            return None
+        expires_at, user = entry
+        if expires_at <= time.monotonic():
+            del _verified[token]
+            return None
+        return user
+
+
+def _remember(token: str, user: CurrentUser) -> None:
+    now = time.monotonic()
+    with _verified_lock:
+        # Tokens rotate, so without this the map would grow for the life of the process.
+        for stale in [key for key, (expires_at, _) in _verified.items() if expires_at <= now]:
+            del _verified[stale]
+        _verified[token] = (now + _VERIFIED_FOR_SECONDS, user)
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> CurrentUser:
@@ -47,6 +86,10 @@ def get_current_user(
     token = credentials.credentials.strip() if credentials else ""
     if not token:
         raise AuthError("Missing bearer token")
+
+    remembered = _remembered(token)
+    if remembered is not None:
+        return remembered
 
     try:
         response = get_db().auth.get_user(token)
@@ -56,4 +99,6 @@ def get_current_user(
     if response is None or response.user is None:
         raise AuthError("Invalid or expired session")
 
-    return CurrentUser(id=response.user.id, email=response.user.email)
+    user = CurrentUser(id=response.user.id, email=response.user.email)
+    _remember(token, user)
+    return user

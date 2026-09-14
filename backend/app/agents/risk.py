@@ -1,19 +1,25 @@
-"""Cross-references all collected evidence and writes the project state.
+"""Cross-references all collected evidence, writes the project state, and plans the fix.
 
-Two things come out of one pass over the evidence, because they are one judgement:
-the blockers and risks, and where the project actually stands — health, a short
-summary, and progress when the evidence supports a number.
+Three things come out of one pass over the evidence, because they are one judgement:
+the blockers and risks, where the project actually stands, and what to do about it.
 
-The LLM cites evidence by index so findings always point at real items
-instead of a paraphrase the model invented.
+It used to be two model calls — one to find the problems, a second to plan around them.
+The second re-sent the project, the findings and every cited evidence title to ask a
+question the model had the evidence for the first time, and on a metered key that
+second call is not free: it is half of every analysis. `recovery.py` still owns the
+plan half of the prompt and the mapping out of it; this node is what asks.
+
+The LLM cites evidence by index so findings always point at real items instead of a
+paraphrase the model invented, and each step cites the finding it addresses.
 """
 
 from pydantic import BaseModel, Field
 
+from app.agents import recovery
 from app.agents.state import AgentState, Evidence, Finding, Severity, activity, health_for
 from app.ai import llm
 
-SYSTEM = """You are a project analyst. You are given evidence collected from a team's
+FINDING_RULES = """You are a project analyst. You are given evidence collected from a team's
 Slack, Gmail, Google Drive, Linear, GitHub and Calendar.
 
 Find the blockers and risks that put the project goal at risk. A finding is only useful
@@ -43,6 +49,8 @@ Then state where the project stands:
   — closed versus open issues, milestones shipped, a checklist someone kept. If you
   would be guessing, return null. A number nobody can check is worse than no number."""
 
+SYSTEM = f"{FINDING_RULES}\n\n{recovery.PLAN_RULES}"
+
 
 class _DraftFinding(BaseModel):
     title: str
@@ -52,10 +60,13 @@ class _DraftFinding(BaseModel):
     evidence_indexes: list[int]
 
 
-class _RiskReport(BaseModel):
+class _Analysis(BaseModel):
+    """Everything one pass over the evidence produces. One schema, one request."""
+
     findings: list[_DraftFinding]
     summary: str = ""
     progress: int | None = Field(default=None, ge=0, le=100)
+    steps: list[recovery.PlanStep] = []
 
 
 def run(state: AgentState) -> dict:
@@ -67,24 +78,43 @@ def run(state: AgentState) -> dict:
             "summary": "No evidence was collected, so there is nothing to report yet. "
             "Connect the apps this project runs on and analyze again.",
             "progress": None,
-            "agent_activity": [activity("risk", "ok", "No evidence collected — nothing to analyze")],
+            "plan": [],
+            "agent_activity": [
+                activity("risk", "ok", "No evidence collected — nothing to analyze"),
+                activity("recovery", "ok", "No findings — no plan needed"),
+            ],
         }
 
-    report = llm.ask_for(_RiskReport, SYSTEM, _build_prompt(state, evidence))
+    report = llm.ask_for(_Analysis, SYSTEM, _build_prompt(state, evidence))
     findings = [_to_finding(draft, evidence) for draft in report.findings]
     health = health_for([finding.severity for finding in findings])
+    # A plan for a problem nobody found is the one thing the plan rules forbid, so it is
+    # dropped here too rather than trusted — this is the last place before the UI offers
+    # a user something to approve.
+    steps = report.steps if findings else []
+    plan = [recovery.to_action(step, findings, state["project_id"]) for step in steps]
 
+    # Two rows from one node: the log is what a user reads to see what the agent did,
+    # and "found the problems" and "proposed the fix" are still two things it did.
     return {
         "findings": findings,
         "health": health,
         "summary": report.summary,
         "progress": report.progress,
+        "plan": plan,
         "agent_activity": [
             activity(
                 "risk",
                 "ok",
                 f"{len(findings)} findings from {len(evidence)} pieces of evidence — {health}",
-            )
+            ),
+            activity(
+                "recovery",
+                "ok",
+                f"{len(plan)} actions proposed, awaiting approval"
+                if plan
+                else "No findings — no plan needed",
+            ),
         ],
     }
 
@@ -96,10 +126,7 @@ def _build_prompt(state: AgentState, evidence: list[Evidence]) -> str:
         "",
         "EVIDENCE:",
     ]
-    for index, item in enumerate(evidence):
-        when = item.timestamp.date().isoformat() if item.timestamp else "unknown date"
-        lines.append(f"[{index}] {item.source} · {item.type} · {when} · {item.title}")
-        lines.append(f"    {item.content}")
+    lines += [item.for_prompt(index) for index, item in enumerate(evidence)]
     return "\n".join(lines)
 
 

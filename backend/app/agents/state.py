@@ -27,6 +27,14 @@ ActionStatus = Literal["pending", "approved", "executing", "completed", "failed"
 BLOCKER_SEVERITIES = ("high", "critical")
 
 
+# How much of one item's body a model is shown. The full text is always kept — this is
+# only what goes into a prompt. A GitHub commit arrives with its whole message body, and
+# a handful of those dominated the prompt while saying nothing the first lines did not.
+# What a finding needs from an item is what it is and roughly when; the rest is padding
+# paid for by the token.
+MAX_CONTENT_IN_PROMPT = 600
+
+
 class Evidence(BaseModel):
     """One normalized fact pulled out of an external app."""
 
@@ -37,6 +45,18 @@ class Evidence(BaseModel):
     url: str | None = None
     timestamp: datetime | None = None
     metadata: dict = Field(default_factory=dict)
+
+    def for_prompt(self, index: int) -> str:
+        """The two lines a model sees for this item, numbered so it can cite the index.
+
+        One format, used by the risk agent and by Ask, because a model that learns to
+        cite `[3]` in one prompt must mean the same thing by it in the other.
+        """
+        when = self.timestamp.date().isoformat() if self.timestamp else "unknown date"
+        body = self.content[:MAX_CONTENT_IN_PROMPT].rstrip()
+        if len(self.content) > MAX_CONTENT_IN_PROMPT:
+            body += " […]"
+        return f"[{index}] {self.source} · {self.type} · {when} · {self.title}\n    {body}"
 
 
 class Finding(BaseModel):

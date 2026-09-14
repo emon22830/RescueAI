@@ -11,7 +11,10 @@
   `supervisor`, and an edge to `risk`.
 
 ## LLM use
-- Only `risk` and `recovery` call the LLM. Investigators collect; they do not reason.
+- Only `risk` calls the LLM, once — it returns the findings, the project state and the
+  recovery plan in a single request, because a metered key counts calls, not tokens.
+  `recovery.py` owns the plan half of that prompt and the mapping out of it, but it is
+  not a node and makes no call of its own. Investigators collect; they do not reason.
 - Never call the LLM SDK directly — use `llm.ask_for(Model, system, prompt)`.
 - Short-circuit before spending money: no evidence → no findings, no findings → no plan.
 

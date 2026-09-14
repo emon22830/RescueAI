@@ -145,10 +145,16 @@ def run_analysis(project_id: str, run_id: str) -> dict:
         result = analyze(project_id, project["name"], project["goal"])
     except Exception as error:  # noqa: BLE001 — recorded on the run, not swallowed
         logger.exception("Analysis failed for project %s", project_id)
+        # A provider refusal arrives as three paragraphs of quota metrics and doc links,
+        # and this text is read back verbatim in the run history and the notification.
+        # Record what the failure means instead.
+        reason = (
+            llm.explain_llm_error(error) if isinstance(error, llm.ProviderError) else str(error)
+        )
         _touch_synced(project_id)
         run = (
             db.table("agent_runs")
-            .update({"status": "failed", "error": str(error), "completed_at": _now()})
+            .update({"status": "failed", "error": reason, "completed_at": _now()})
             .eq("id", run_id)
             .execute()
             .data[0]
@@ -159,7 +165,7 @@ def run_analysis(project_id: str, run_id: str) -> dict:
             kind="run_failed",
             severity="danger",
             title=f"Analysis failed for {project['name']}",
-            body=str(error),
+            body=reason,
         )
         return run
 
@@ -311,7 +317,12 @@ def answer_question(project_id: str, owner_id: str, question: str) -> dict:
     evidence = _evidence_for_run(run["id"])
     system = ASK_SYSTEM if evidence else ASK_NO_EVIDENCE_SYSTEM
 
-    result = llm.ask_for(_Answer, system, _ask_prompt(project_id, question, evidence))
+    result = llm.ask_for(
+        _Answer,
+        system,
+        _ask_prompt(project_id, question, evidence),
+        thinking_budget=llm.BRIEF_THINKING_BUDGET,
+    )
     cited = [evidence[i] for i in result.evidence_indexes if 0 <= i < len(evidence)]
 
     return {
@@ -349,10 +360,7 @@ def _ask_prompt(project_id: str, question: str, evidence: list[Evidence]) -> str
     ]
     if not evidence:
         lines.append("(none — the latest run collected nothing)")
-    for index, item in enumerate(evidence):
-        when = item.timestamp.date().isoformat() if item.timestamp else "unknown date"
-        lines.append(f"[{index}] {item.source} · {item.type} · {when} · {item.title}")
-        lines.append(f"    {item.content}")
+    lines += [item.for_prompt(index) for index, item in enumerate(evidence)]
     lines += ["", f"QUESTION: {question}"]
     return "\n".join(lines)
 

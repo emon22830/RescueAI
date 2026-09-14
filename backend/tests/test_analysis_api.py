@@ -44,21 +44,18 @@ def agent(monkeypatch):
     """One critical finding, one recovery step, and a project state to persist."""
 
     def fake_ask_for(schema, system, prompt):
-        if "findings" in schema.model_fields:
-            return schema(
-                findings=[
-                    {
-                        "title": "Payment API blocked",
-                        "severity": "critical",
-                        "confidence": 0.9,
-                        "description": "Slack and Linear disagree about PAY-124.",
-                        "evidence_indexes": [0, 1],
-                    }
-                ],
-                summary=SUMMARY,
-                progress=40,
-            )
         return schema(
+            findings=[
+                {
+                    "title": "Payment API blocked",
+                    "severity": "critical",
+                    "confidence": 0.9,
+                    "description": "Slack and Linear disagree about PAY-124.",
+                    "evidence_indexes": [0, 1],
+                }
+            ],
+            summary=SUMMARY,
+            progress=40,
             steps=[
                 {
                     "integration": "linear",
@@ -68,7 +65,7 @@ def agent(monkeypatch):
                     "value": "assign to Dana",
                     "finding_index": 0,
                 }
-            ]
+            ],
         )
 
     monkeypatch.setattr(risk.llm, "ask_for", fake_ask_for)

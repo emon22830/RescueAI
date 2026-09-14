@@ -52,10 +52,9 @@ def at_risk(monkeypatch):
             )
         return schema(steps=[])
 
-    from app.agents import recovery, risk
+    from app.agents import risk
 
     monkeypatch.setattr(risk.llm, "ask_for", fake_ask_for)
-    monkeypatch.setattr(recovery.llm, "ask_for", fake_ask_for)
 
 
 def create_project(client, name: str = "SaaS Product Launch") -> str:

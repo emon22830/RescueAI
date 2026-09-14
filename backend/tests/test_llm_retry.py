@@ -129,3 +129,84 @@ def test_a_structured_answer_is_retried_the_same_way(provider, monkeypatch):
 
     assert llm.ask_for(Shape, "system", "prompt") is answer
     assert calls["n"] == 2
+
+
+# --- what the provider asked for, versus what we guessed -----------------------
+#
+# Found in production, and only in production: the Gemini key was on the free tier,
+# which allows 20 requests a day. Every call answered 429, `_worth_retrying` saw a rate
+# limit, and the four attempts spent 98 seconds before failing with the same message
+# the first attempt already had. A day-long quota is not a spike to ride out.
+
+
+def quota_error(quota_id: str, retry_delay: str | None = None, limit: str = "20"):
+    """A 429 shaped the way the Gemini API actually returns one."""
+    error = fake_error(429, "RESOURCE_EXHAUSTED")
+    parts: list[dict] = [
+        {
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            "violations": [{"quotaId": quota_id, "quotaValue": limit}],
+        }
+    ]
+    if retry_delay:
+        parts.append({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay})
+    error.details = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": parts}}
+    return error
+
+
+def test_a_daily_quota_is_not_retried(provider):
+    """It does not come back until the day does."""
+    calls = provider([quota_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")] * 10)
+
+    with pytest.raises(genai_errors.ClientError):
+        llm.ask("system", "prompt")
+    assert calls["n"] == 1, "a day-long quota must fail on the first attempt"
+
+
+def test_a_per_minute_limit_is_still_waited_out(provider):
+    """The distinction is the quota's period, not the status code."""
+    calls = provider([quota_error("GenerateRequestsPerMinutePerProjectPerModel", "5s")])
+
+    assert llm.ask("system", "prompt") == "ok"
+    assert calls["n"] == 2
+
+
+def test_it_waits_as_long_as_the_provider_asked(provider, monkeypatch):
+    """Waiting 2s when the provider said 12s just fails again on purpose."""
+    waited: list[float] = []
+    monkeypatch.setattr(llm.time, "sleep", waited.append)
+    provider([quota_error("GenerateRequestsPerMinutePerProjectPerModel", "12s")])
+
+    assert llm.ask("system", "prompt") == "ok"
+    assert waited == [12.0], "our own backoff table should not override RetryInfo"
+
+
+def test_it_refuses_a_wait_nobody_would_sit_through(provider):
+    """Past the cap, failing now with the real reason beats hanging and failing anyway."""
+    delay = f"{llm.MAX_RETRY_WAIT_SECONDS + 10}s"
+    calls = provider([quota_error("GenerateRequestsPerMinutePerProjectPerModel", delay)] * 10)
+
+    with pytest.raises(genai_errors.ClientError):
+        llm.ask("system", "prompt")
+    assert calls["n"] == 1
+
+
+def test_an_exhausted_free_tier_says_so_and_names_the_fix():
+    """The raw body is quota metrics and doc links; this text is what a user reads."""
+    message = llm.explain_llm_error(
+        quota_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    )
+
+    assert "free-tier quota" in message
+    assert "20 requests per day" in message
+    assert "billing" in message
+
+
+def test_a_malformed_error_body_does_not_become_a_second_failure(provider):
+    """Nothing here may crash on a shape the provider changed."""
+    error = fake_error(429, "RESOURCE_EXHAUSTED")
+    error.details = {"error": {"details": "not a list"}}
+
+    assert llm._daily_quota_exhausted(error) is False
+    assert llm._requested_wait(error) is None
+    assert llm.explain_llm_error(error)

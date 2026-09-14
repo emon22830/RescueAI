@@ -72,22 +72,19 @@ def test_evidence_from_every_app_reaches_the_risk_agent(apps, monkeypatch):
 
 
 def test_findings_cite_real_evidence_and_set_health(apps, monkeypatch):
-    """risk and recovery share one llm module, so the fake answers by schema."""
+    """The findings and the plan come back from one call, in one answer."""
 
     def fake_ask_for(schema, system, prompt):
-        if "findings" in schema.model_fields:
-            return schema(
-                findings=[
-                    {
-                        "title": "Payment API blocked",
-                        "severity": "critical",
-                        "confidence": 0.9,
-                        "description": "Slack and Linear disagree about PAY-124.",
-                        "evidence_indexes": [0, 2, 99],  # 99 must be ignored
-                    }
-                ]
-            )
         return schema(
+            findings=[
+                {
+                    "title": "Payment API blocked",
+                    "severity": "critical",
+                    "confidence": 0.9,
+                    "description": "Slack and Linear disagree about PAY-124.",
+                    "evidence_indexes": [0, 2, 99],  # 99 must be ignored
+                }
+            ],
             steps=[
                 {
                     "integration": "linear",
@@ -97,7 +94,7 @@ def test_findings_cite_real_evidence_and_set_health(apps, monkeypatch):
                     "value": "assign to Dana",
                     "finding_index": 0,
                 }
-            ]
+            ],
         )
 
     monkeypatch.setattr(risk.llm, "ask_for", fake_ask_for)
@@ -127,3 +124,105 @@ def test_one_broken_app_does_not_lose_the_others(apps, monkeypatch):
     failures = [entry for entry in result["agent_activity"] if entry.status == "failed"]
     assert len(failures) == 1
     assert "Slack is down" in failures[0].detail
+
+
+def test_one_analysis_costs_one_model_call(apps, monkeypatch):
+    """The reason the findings and the plan share a request.
+
+    A metered key counts calls, not tokens — the Gemini free tier allows 20 a day — so
+    a second call to plan around findings the model had just written was half of every
+    analysis. If this ever goes back to two, an afternoon of debugging costs twice the
+    quota it needs to.
+    """
+    calls: list[str] = []
+
+    def fake_ask_for(schema, system, prompt):
+        calls.append(schema.__name__)
+        return schema(
+            findings=[
+                {
+                    "title": "Payment API blocked",
+                    "severity": "critical",
+                    "confidence": 0.9,
+                    "description": "PAY-124 has not moved.",
+                    "evidence_indexes": [0],
+                }
+            ],
+            steps=[
+                {
+                    "integration": "linear",
+                    "type": "update_issue",
+                    "description": "Reassign PAY-124",
+                    "target": "PAY-124",
+                    "value": "assign to Dana",
+                    "finding_index": 0,
+                }
+            ],
+        )
+
+    monkeypatch.setattr(risk.llm, "ask_for", fake_ask_for)
+    result = analyze("test-id", "SaaS Product Launch", "Launch by Oct 1")
+
+    assert len(calls) == 1, f"one analysis should be one call, was {calls}"
+    assert result["findings"] and result["plan"], "and it still produces both halves"
+
+
+def test_no_evidence_spends_nothing(monkeypatch):
+    """The cheapest call is the one nobody makes."""
+    calls: list[str] = []
+    monkeypatch.setattr(risk.llm, "ask_for", lambda *a, **k: calls.append("x"))
+
+    result = analyze("test-id", "SaaS Product Launch", "Launch by Oct 1")
+
+    assert calls == []
+    assert result["findings"] == [] and result["plan"] == []
+
+
+def test_a_plan_for_a_problem_nobody_found_is_dropped(apps, monkeypatch):
+    """The last guard before the UI offers a user something to approve. One request for
+    both halves means a model that finds nothing can still volunteer steps."""
+
+    def fake_ask_for(schema, system, prompt):
+        return schema(
+            findings=[],
+            steps=[
+                {
+                    "integration": "linear",
+                    "type": "update_issue",
+                    "description": "Tidy the backlog",
+                    "target": "PAY-1",
+                    "value": "close it",
+                    "finding_index": 0,
+                }
+            ],
+        )
+
+    monkeypatch.setattr(risk.llm, "ask_for", fake_ask_for)
+    result = analyze("test-id", "SaaS Product Launch", "Launch by Oct 1")
+
+    assert result["plan"] == []
+
+
+def test_a_long_evidence_body_is_capped_in_the_prompt():
+    """A GitHub commit arrives with its whole message body, and a few of those dominated
+    the prompt while saying nothing the first lines did not. The stored evidence keeps
+    the full text — this only caps what a model is charged to read."""
+    from app.agents.state import MAX_CONTENT_IN_PROMPT, Evidence
+
+    item = Evidence(source="github", type="commit", title="feat: everything", content="x" * 5000)
+
+    line = item.for_prompt(3)
+
+    assert line.startswith("[3] github · commit · ")
+    assert "feat: everything" in line
+    assert line.endswith("[…]")
+    assert len(line) < MAX_CONTENT_IN_PROMPT + 200
+    assert len(item.content) == 5000, "the evidence itself must not be truncated"
+
+
+def test_a_short_evidence_body_is_left_alone():
+    from app.agents.state import Evidence
+
+    item = Evidence(source="slack", type="message", title="Blocked", content="PAY-124 is stuck")
+
+    assert item.for_prompt(0).endswith("PAY-124 is stuck")

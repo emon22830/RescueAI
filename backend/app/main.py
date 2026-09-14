@@ -6,9 +6,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from httpx import HTTPError
 from postgrest import APIError
 
-from app.ai.llm import LLMError
+from app.ai.llm import LLMError, ProviderError, explain_llm_error
 from app.api import actions, analysis, ask, integrations, notifications, projects
 from app.auth import AuthError, CredentialError
 from app.auth.router import router as auth_router
@@ -93,6 +94,18 @@ async def handle_llm_error(request: Request, error: LLMError) -> JSONResponse:
     return JSONResponse(status_code=502, content={"detail": str(error)})
 
 
+@app.exception_handler(ProviderError)
+async def handle_provider_error(request: Request, error: ProviderError) -> JSONResponse:
+    """The LLM provider refused or could not serve the request.
+
+    `LLMError` above is the model answering with something unusable; this is the API in
+    front of it saying no — out of quota, rate limited, key rejected. It arrived as an
+    unhandled exception, so Ask spent a minute and a half on retries and then showed
+    "The server hit an unexpected error", which names neither the cause nor the fix."""
+    logger.exception("LLM provider refused the request")
+    return JSONResponse(status_code=502, content={"detail": explain_llm_error(error)})
+
+
 @app.exception_handler(CredentialError)
 async def handle_credential_error(request: Request, error: CredentialError) -> JSONResponse:
     """A stored token cannot be decrypted, which means CREDENTIAL_ENCRYPTION_KEY is not
@@ -120,6 +133,25 @@ async def handle_invalid_request(request: Request, error: ValueError) -> JSONRes
 async def handle_database_error(request: Request, error: APIError) -> JSONResponse:
     logger.exception("Supabase request failed")
     return JSONResponse(status_code=502, content={"detail": f"Database error: {error.message}"})
+
+
+@app.exception_handler(HTTPError)
+async def handle_transport_error(request: Request, error: HTTPError) -> JSONResponse:
+    """The call to Supabase never completed — a dropped connection, a timeout, a reset.
+
+    `APIError` above is Supabase answering with a problem; this is Supabase not
+    answering at all, and it arrives as an httpx exception that nothing else names.
+    Left unhandled it became "The server hit an unexpected error", which sends whoever
+    reads it looking for a bug in code that was fine. Say the request did not get there
+    and that retrying is the right move."""
+    logger.exception("Could not reach Supabase on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=502,
+        content={
+            "detail": f"Could not reach the database ({type(error).__name__}). "
+            "The request did not complete — try again."
+        },
+    )
 
 
 app.include_router(auth_router)

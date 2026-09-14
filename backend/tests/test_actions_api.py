@@ -60,24 +60,25 @@ def apps(monkeypatch):
 
 @pytest.fixture
 def agent(monkeypatch):
-    """One critical finding and the three-step recovery plan above."""
+    """One critical finding and the three-step recovery plan above.
+
+    One call, one answer: the findings and the plan come back together now."""
 
     def fake_ask_for(schema, system, prompt):
-        if "findings" in schema.model_fields:
-            return schema(
-                findings=[
-                    {
-                        "title": "Payment API blocked",
-                        "severity": "critical",
-                        "confidence": 0.9,
-                        "description": "PAY-124 has not moved since Sep 2.",
-                        "evidence_indexes": [0],
-                    }
-                ],
-                summary="Payments is blocked on a vendor sandbox key.",
-                progress=40,
-            )
-        return schema(steps=PLAN)
+        return schema(
+            findings=[
+                {
+                    "title": "Payment API blocked",
+                    "severity": "critical",
+                    "confidence": 0.9,
+                    "description": "PAY-124 has not moved since Sep 2.",
+                    "evidence_indexes": [0],
+                }
+            ],
+            summary="Payments is blocked on a vendor sandbox key.",
+            progress=40,
+            steps=PLAN,
+        )
 
     monkeypatch.setattr(risk.llm, "ask_for", fake_ask_for)
 

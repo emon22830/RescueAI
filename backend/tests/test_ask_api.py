@@ -70,7 +70,7 @@ def analyzed_project(client: TestClient) -> str:
 
 def answer(monkeypatch, **fields):
     """Make the ask call return one fixed answer."""
-    def fake_ask_for(schema, system, prompt):
+    def fake_ask_for(schema, system, prompt, **_options):
         fake_ask_for.prompt = prompt
         return schema(**fields)
 
@@ -255,3 +255,27 @@ def test_a_long_pasted_question_is_accepted(client: TestClient, apps, agent, mon
     )
 
     assert response.status_code == 200
+
+
+def test_an_exhausted_quota_names_the_cause_instead_of_a_bare_500(
+    client: TestClient, apps, agent, monkeypatch
+):
+    """What actually happened in production: the Gemini key had spent its free-tier
+    allowance, the provider's 429 was unhandled, and Ask spent ninety seconds retrying
+    before showing "The server hit an unexpected error" — which names neither the cause
+    nor the fix."""
+    from tests.test_llm_retry import quota_error
+
+    project_id = analyzed_project(client)
+
+    def out_of_quota(*_args, **_kwargs):
+        raise quota_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+
+    monkeypatch.setattr(service.llm, "ask_for", out_of_quota)
+
+    response = client.post(f"/projects/{project_id}/ask", json={"question": "Status?"})
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "free-tier quota" in detail
+    assert "billing" in detail

@@ -65,7 +65,7 @@ POST /projects/{id}/analyze
   → projects/service.py        creates an agent_runs row
   → agents/graph.py            runs the workflow
   → integrations/*             real API calls
-  → ai/llm.py                  risk + recovery reasoning
+  → ai/llm.py                  one risk call: findings, state and plan
   → projects/service.py        saves evidence, findings, actions
   → agent_runs marked completed
 ```
