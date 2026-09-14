@@ -43,10 +43,26 @@ class Settings(BaseSettings):
     scheduler_tick_seconds: int = 60
 
     @property
+    def allowed_origins(self) -> list[str]:
+        """The browser origins allowed to call this API.
+
+        Forgiving about how the value was typed into a hosting dashboard, because a
+        malformed one fails invisibly: the browser just reports a network error and
+        every screen in the app reads as "backend down". A trailing slash, wrapping
+        quotes or a stray blank between commas must not cost an afternoon."""
+        origins = []
+        for raw in self.cors_origins.split(","):
+            origin = raw.strip().strip("\"'").rstrip("/")
+            if origin:
+                origins.append(origin)
+        return origins
+
+    @property
     def app_url(self) -> str:
         """Where to send a user once an OAuth round trip is finished — the first
         allowed origin, which is the app itself."""
-        return settings.cors_origins.split(",")[0].strip()
+        origins = self.allowed_origins
+        return origins[0] if origins else "http://localhost:5173"
 
     def require(self, *names: str) -> None:
         """Fail with one clear message naming every variable that is missing."""

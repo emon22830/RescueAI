@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI):
     """Own the scheduler's lifetime: it starts with the app and is stopped cleanly on
     shutdown, so a reload does not leave a tick running against a closing database."""
+    # The allowed origins decide whether the deployed frontend can talk to this API at
+    # all, and a wrong one shows up in the browser as a bare network error with nothing
+    # in the server log. Say what they are, once, where a deploy log will show it.
+    logger.info("CORS allowed origins: %s", ", ".join(settings.allowed_origins) or "(none)")
     await scheduler.start()
     yield
     await scheduler.stop()
@@ -31,7 +35,7 @@ app = FastAPI(title="RescueAI", version="0.5.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",")],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

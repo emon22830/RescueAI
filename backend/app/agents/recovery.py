@@ -34,9 +34,23 @@ Rules:
 - Order the steps so the most urgent blocker is unblocked first.
 - Use the app the work actually lives in: the issue tracker for work, Slack for telling
   people, Calendar for a decision that needs the room, email for someone outside the team.
-- Set `params` only for the optional extras a step's own line names. Leave it empty
-  otherwise; never invent a parameter that is not offered.
+- Set `params` only for the optional extras a step's own line names, as a list of
+  {{"name": ..., "value": ...}} pairs. Leave it empty otherwise; never invent a
+  parameter that is not offered.
 - Keep the plan short. Four or five steps is usually enough."""
+
+
+class _PlanParam(BaseModel):
+    """One optional extra a step needs — team, assignee, due_date, subject, start.
+
+    A list of name/value pairs rather than a dict. A dict of arbitrary keys becomes an
+    open-ended map in the generated JSON schema, and the Gemini Developer API rejects
+    any schema containing one — a failure that appears only on a real call, never in a
+    test with a stubbed model. `test_llm_schemas.py` is the guard for that.
+    """
+
+    name: str
+    value: str
 
 
 class _PlanStep(BaseModel):
@@ -45,9 +59,7 @@ class _PlanStep(BaseModel):
     description: str
     target: str
     value: str
-    # The optional extras a type names in its guidance — team, assignee, due_date,
-    # subject, start, minutes. Strings only: this is a model's answer, not a schema.
-    params: dict[str, str] = {}
+    params: list[_PlanParam] = []
     finding_index: int
 
 
@@ -100,7 +112,7 @@ def _to_action(step: _PlanStep, findings: list[Finding], project_id: str) -> Pla
         description=step.description,
         target=step.target,
         reason=reason,
-        # `value` is written last so a model that also put it in params cannot
+        # `value` is written last so a model that also named it in params cannot
         # shadow the field the integrations actually read.
-        params={**step.params, "value": step.value},
+        params={**{param.name: param.value for param in step.params}, "value": step.value},
     )

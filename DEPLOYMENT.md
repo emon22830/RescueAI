@@ -103,7 +103,20 @@ back to whichever URL is set as Site URL, regardless of where the user actually 
 
 ```bash
 curl https://rescueai-xkhy.onrender.com/health        # {"status":"ok"}
+
+# /health passes even when CORS is wrong, and then every screen in the app reads as
+# "could not reach the backend". This is the check that catches it — a 200 with an
+# access-control-allow-origin line back is correct; a 400 "Disallowed CORS origin"
+# means CORS_ORIGINS on Render does not contain the Vercel URL.
+curl -i -X OPTIONS https://rescueai-xkhy.onrender.com/projects \
+  -H "Origin: https://rescue-ai-self.vercel.app" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: authorization"
 ```
+
+The backend logs its allowed origins once at startup (`CORS allowed origins: ...`), so
+Render's deploy log says what the value actually parsed to. A trailing slash, wrapping
+quotes or stray spaces are tolerated; a different hostname is not.
 
 Then in the browser: open the Vercel URL, sign in, create (or open) a project, connect
 one app, run **Analyze**. If sign-in redirects to the wrong host, re-check Supabase Auth

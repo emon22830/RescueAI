@@ -34,7 +34,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       ...options,
     })
   } catch {
-    throw new ApiError(0, 'Could not reach the backend. Is it running on port 8000?')
+    // fetch only rejects before a response exists: the host is unreachable, or the
+    // browser blocked the response because the origin is not in the backend's
+    // CORS_ORIGINS. The deployed app is the second case far more often, and "port
+    // 8000" is a lie there — so name the host that actually failed.
+    throw new ApiError(
+      0,
+      BASE
+        ? `Could not reach the backend at ${BASE}. It may be starting up, or it is not ` +
+          `allowing requests from ${window.location.origin} (backend CORS_ORIGINS).`
+        : 'Could not reach the backend. Is it running on port 8000?',
+    )
   }
 
   if (!response.ok) {
