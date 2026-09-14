@@ -53,8 +53,14 @@ traceback where nobody is watching and the user sees a generic message. Every di
 this session needed either a reproduction or a log read; neither scales past one
 developer.
 
-`/health` is a liveness check being read as a readiness check — it answers `ok` when
-Supabase is unreachable, so a service that cannot serve anything looks healthy.
+Half of this is now fixed: `GET /health/ready` reaches the database and answers 502/503
+when it cannot, while `/health` keeps answering `ok` whenever the process is alive. They
+are separate on purpose — a platform health check that goes red during a database blip
+would restart a service whose code is fine. Nothing automated is wired to `/health/ready`
+yet; it is there to be asked.
+
+What is still missing is somewhere for a failure to *go*. An exception logs a traceback
+in Render and notifies nobody.
 
 ## Traps worth knowing
 

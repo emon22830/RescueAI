@@ -14,6 +14,7 @@ from app.api import actions, analysis, ask, integrations, notifications, project
 from app.auth import AuthError, CredentialError
 from app.auth.router import router as auth_router
 from app.config import ConfigurationError, settings
+from app.projects import service
 from app.projects.service import ProjectNotFound
 from app import scheduler
 
@@ -162,6 +163,19 @@ app.include_router(integrations.router)
 app.include_router(integrations.oauth_router)
 app.include_router(ask.router)
 app.include_router(notifications.router)
+
+
+@app.get("/health/ready", tags=["health"])
+def ready() -> dict[str, str]:
+    """Whether this backend can actually serve a request.
+
+    Separate from `/health` on purpose. `/health` must keep answering `ok` whenever the
+    process is alive — a platform health check that goes red during a database blip
+    would restart or roll back a service whose code is fine. This one reaches the
+    database, so it can say no, and nothing automated is wired to it.
+    """
+    service.check_database()
+    return {"status": "ready"}
 
 
 @app.get("/health", tags=["health"])

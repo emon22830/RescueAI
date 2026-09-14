@@ -23,6 +23,18 @@ from app.integrations import asana, github, google_auth, jira, linear, notion, s
 # The apps a project connects its own credential for, from the frontend, verified
 # before the token is stored. Gmail/Drive/Calendar stay on the shared backend/.env
 # Google app until Phase 2 makes them per-project too.
+def check_database() -> None:
+    """One cheap query, so "ready" means more than "the process started".
+
+    `/health` answers `ok` as long as the process is alive, which is what a liveness
+    check is for — but read as readiness it is a lie: a backend that cannot reach
+    Supabase serves nothing and still looks healthy. This raises whatever the client
+    raises, and the handlers in `main.py` turn a transport failure into 502 and a
+    missing variable into 503.
+    """
+    get_db().table("projects").select("id").limit(1).execute()
+
+
 TOKEN_INTEGRATIONS = {
     "slack": slack,
     "linear": linear,

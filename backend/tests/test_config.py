@@ -77,3 +77,29 @@ def test_health_reports_the_commit_when_render_sets_one(client, monkeypatch):
 
     monkeypatch.setattr(settings, "render_git_commit", "2d040814a9f0deadbeef")
     assert client.get("/health").json()["commit"] == "2d04081"
+
+
+def test_readiness_reaches_the_database(client):
+    """`/health` cannot answer this — it says ok whenever the process is alive."""
+    body = client.get("/health/ready").json()
+    assert body["status"] == "ready"
+
+
+def test_readiness_says_no_when_the_database_is_unconfigured(monkeypatch):
+    """The case /health gets wrong: nothing to serve from, still reporting healthy."""
+    from app.config import ConfigurationError
+    from app.main import app
+    from app.projects import service
+    from starlette.testclient import TestClient
+
+    def unconfigured():
+        raise ConfigurationError("Missing environment variable(s): SUPABASE_URL.")
+
+    monkeypatch.setattr(service, "get_db", unconfigured)
+    response = TestClient(app, raise_server_exceptions=False).get("/health/ready")
+
+    assert response.status_code == 503
+    assert "SUPABASE_URL" in response.json()["detail"]
+    # Liveness must stay green through it, or a platform health check restarts a
+    # service whose code is fine.
+    assert TestClient(app).get("/health").json()["status"] == "ok"
