@@ -144,11 +144,18 @@ them.
 ## Verifying a deploy
 
 ```bash
-# {"status":"ok","version":"0.5.0","commit":"6a6217e"} — `commit` is the build that is
+# {"status":"ok","version":"0.6.1","commit":"4db2da8"} — `commit` is the build that is
 # actually answering, so it is how you tell a deploy that landed from one still rolling
 # out. It comes from RENDER_GIT_COMMIT, which Render sets and nothing else does, so a
-# local run says "local".
+# local run says "local". Render builds from the backend/ root, so a commit touching
+# only .github/ or docs correctly does not move this.
 curl https://rescueai-xkhy.onrender.com/health
+
+# Whether it can actually *serve*: this one reaches Supabase, so it can answer no.
+# {"status":"ready"}, or 502/503 naming what is wrong. Keep any platform health check
+# pointed at /health rather than this — a readiness check going red during a database
+# blip would restart or roll back a service whose code is fine.
+curl https://rescueai-xkhy.onrender.com/health/ready
 
 # /health passes even when CORS is wrong, and then every screen in the app reads as
 # "could not reach the backend". This is the check that catches it — a 200 with an
