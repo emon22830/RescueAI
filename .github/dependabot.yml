@@ -1,0 +1,46 @@
+# Pinned dependencies do not update themselves — that is the point of pinning, and it
+# is also how a project ends up a year behind on a security release without anyone
+# deciding to be. Dependabot is what turns that back into a decision: it opens a pull
+# request, CI runs the suite against the new version, and a green check is the evidence
+# for merging it.
+#
+# Grouped and weekly on purpose. Ten separate pull requests every Monday get ignored,
+# and ignored updates are the same as no updates.
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      backend:
+        patterns: ['*']
+        # A major bump is the one that needs reading, so it does not travel in a group
+        # with routine patches that would otherwise be merged on a glance.
+        exclude-patterns: []
+        update-types: [minor, patch]
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      frontend:
+        patterns: ['*']
+        update-types: [minor, patch]
+    commit-message:
+      prefix: build
+
+  # The actions in ci.yml are pinned to major tags and still go stale — an unmaintained
+  # action is a supply-chain risk in the one workflow that can reach production.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
