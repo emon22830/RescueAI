@@ -2,6 +2,42 @@
 
 Semver. MAJOR = breaking contract or schema. MINOR = shipped feature. PATCH = fix.
 
+## [0.6.0] — 2026-09-14
+
+**The first analysis to run against a live workspace.** 10 real GitHub commits
+collected with working URLs, project state written by the risk agent, Ask answering
+from that evidence with citations. Two bugs surfaced that no test could have caught.
+
+### Fixed
+- **The recovery planner sent a schema Gemini refuses.** `_PlanStep.params` was
+  `dict[str, str]`; a dict of arbitrary keys becomes an open-ended map, and the Gemini
+  Developer API rejects the whole request. Every analysis that got as far as proposing
+  a plan died at the last node, losing findings the risk agent had already produced.
+  Now a list of `{name, value}` pairs — same capability, a schema the provider accepts.
+- **A transient provider 503 threw away a whole investigation.** `gemini-3.8-flash`
+  spent minutes answering "experiencing high demand"; the evidence had already been
+  collected by then, and a scheduled run has nobody watching to retry. `llm.ask` and
+  `ask_for` now share one `_generate` that retries 5xx and 429 four times (2s/6s/15s)
+  and re-raises the real error when it gives up. A 4xx fails immediately — retrying our
+  own mistake only hides it behind a delay.
+
+### Added
+- `tests/test_llm_schemas.py` — every model passed to `llm.ask_for` is checked
+  structurally for open-ended maps and untyped fields, including a test that the guard
+  still detects a known-bad model so it cannot pass vacuously
+- `tests/test_llm_retry.py` — what is retried and what is not, without calling out
+- `migrations/0005_finish_multi_tenant.sql` — finishes `0001`, which was left
+  deliberately half-applied: the one ownerless project gets an owner and
+  `projects.owner_id` becomes `not null`, matching what `schema.sql` always claimed
+- `settings.allowed_origins` — forgiving CORS parsing (trailing slash, quotes, spacing)
+  and a startup log line naming the origins, because a wrong value fails invisibly as
+  "the backend is down" in every screen
+
+### Operational
+- Migrations 0002–0005 applied to the live Supabase project and verified by inserting
+  exactly what the new code writes inside a rolled-back transaction
+- 223 tests, still hermetic
+
 ## [0.5.0] — 2026-09-14
 
 ### Added

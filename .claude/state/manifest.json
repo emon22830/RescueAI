@@ -1,15 +1,15 @@
 {
   "project": "RescueAI",
   "repo": "https://github.com/emon22830/RescueAI",
-  "version": "0.5.0",
-  "phase": "3 of 4 \u2014 The loop runs itself, and can actually act",
+  "version": "0.6.0",
+  "phase": "4 of 4 \u2014 Proven against a live workspace",
   "updated": "2026-09-14",
   "claude_setup_version": "1.0.0",
   "stack_locked": true,
   "surfaces": {
     "backend": {
-      "version": "0.5.0",
-      "status": "ten connectors, 31 action types, scheduling and dashboard actions; live database still needs migrations 0002-0004"
+      "version": "0.6.0",
+      "status": "ten connectors, 31 action types, scheduling, dashboard actions; migrations applied and one full analysis proven live"
     },
     "frontend": {
       "version": "0.4.0",

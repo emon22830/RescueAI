@@ -1,6 +1,6 @@
 # Where the project is
 
-**Updated:** 2026-09-14 · **Version:** 0.5.0 · **Phase:** 3 of 4 — The loop runs itself
+**Updated:** 2026-09-14 · **Version:** 0.6.0 · **Phase:** 4 of 4 — Proven against a live workspace
 
 ## In one paragraph
 
@@ -13,11 +13,18 @@ when the verdict changes. A user can also act directly from the dashboard withou
 waiting for the agent to propose anything. Whichever tracker a team runs — Linear,
 Jira, Asana or Trello — is covered, which is what makes it usable outside a startup.
 
-**What is unproven is everything downstream of a credential.** 203 tests drive the
-whole path through the real FastAPI app against an in-memory database, and the suite is
-hermetic. But the live Supabase project is three migrations behind this code, `findings`
-has never had a row in it, and no write has touched a real workspace. The code is
-finished; the proof is not.
+**It has now run for real.** Migrations 0002–0005 are applied to the live Supabase
+project, and a full analysis has completed end to end against a live workspace: 10
+real GitHub commits collected with working URLs, the project state written by the risk
+agent in its own words, and Ask answering from that evidence with citations. 223 tests
+back it, and the suite is hermetic.
+
+Two bugs were found by that first live run, and by nothing else: the recovery planner
+sent a schema the Gemini Developer API refuses outright, and a transient provider 503
+threw away a whole investigation after the evidence had been collected. Both are fixed,
+both now have tests. What is still unproven is narrow: **no write action has been
+executed against a real workspace**, because that needs a token with write scope on
+something safe to write to.
 
 ## Done
 
@@ -77,16 +84,15 @@ finished; the proof is not.
 
 ## Next three tasks
 
-1. **Run all three migrations**, in order, in the Supabase SQL editor: `0002`, `0003`,
-   then `0004` from `backend/migrations/`. Then confirm
-   `PUT /projects/{id}/schedule {"sync_interval_minutes": 60}` returns 200, that
-   `select * from notifications` resolves, that `POST /projects/{id}/actions` returns
-   201, and that connecting Jira on a project succeeds. This unblocks everything below.
-2. **Connect Slack and one tracker on a live project** from its Connections page —
-   whichever of Linear/Jira/Asana/Trello you actually use — then run one
-   `POST /projects/{id}/analyze` and read the summary it writes. This is still the first
-   time the risk prompt will be judged on real cross-app evidence, and `findings` has
-   never had a row in it.
+1. **Execute one write against a real workspace** — the last unproven path. Slack
+   `post_message` is the sharpest test: it is the only write with a lookup in front of
+   it (`resolve_channel`), and it needs `chat:write`, which collection does not. Connect
+   Slack on a throwaway channel, take the action from the dashboard composer, and read
+   what comes back.
+2. **Get a second app onto one project**, so the risk agent is judged on *cross-app*
+   evidence. Today's live run had GitHub alone, and a finding is only worth reading when
+   it connects two sources — with one app the honest answer was 0 findings, which is
+   correct but proves only half the prompt.
 3. **Take one action from the dashboard against a real workspace** — a Slack
    `post_message` is the sharpest test, because it is the only write with a lookup in
    front of it (`resolve_channel` turns `#payments` into a channel id) and it needs the
