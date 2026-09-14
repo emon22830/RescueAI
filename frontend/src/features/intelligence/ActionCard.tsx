@@ -40,7 +40,10 @@ export function ActionCard({ action, status, selected, onToggle }: Props) {
           </div>
 
           <p className="mt-1.5 break-words text-xs text-faint">
-            {SOURCE_LABELS[action.integration]} · {humanize(action.type)}
+            {/* Who wrote it. An action taken from the dashboard was never proposed by
+                the agent, and the log should not imply that it was. */}
+            {action.origin === 'user' ? 'You' : 'Agent'} · {SOURCE_LABELS[action.integration]} ·{' '}
+            {humanize(action.type)}
             {action.target && (
               <>
                 {' · '}

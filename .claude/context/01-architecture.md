@@ -30,11 +30,14 @@ database, and letting React talk to the external apps.
 START
   ↓
 supervisor
-  ├──────────────┬──────────────┐
-  ↓              ↓              ↓
-communication  engineering  requirements
-Slack+Gmail    GitHub+Linear  Drive+Calendar
-  └──────────────┴──────────────┘
+  ├──────────────┬──────────────┬──────────────┐
+  ↓              ↓              ↓              ↓
+communication  engineering   delivery     requirements
+Slack          GitHub        Linear       Drive
+Gmail                        Jira         Notion
+                             Asana        Calendar
+                             Trello
+  └──────────────┴──────────────┴──────────────┘
                  ↓
                risk          cross-references everything → findings
                  ↓
@@ -45,9 +48,14 @@ Slack+Gmail    GitHub+Linear  Drive+Calendar
              executor        writes back. No LLM.
 ```
 
-The three investigators run in parallel. `AgentState["evidence"]` is
+The four investigators run in parallel. `AgentState["evidence"]` is
 `Annotated[list[Evidence], operator.add]` so they append instead of overwriting. `risk`
-has an edge from all three, so LangGraph waits for all of them before it runs.
+has an edge from every one of them, so LangGraph waits for all of them before it runs.
+
+`engineering` and `delivery` are deliberately separate. What a team built and what its
+plan says are different questions, and the distance between the two is most of what
+this product exists to find — so they are collected by different agents and appear as
+different lines in the run's activity log.
 
 ## Request flow
 

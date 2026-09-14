@@ -1,0 +1,112 @@
+# Deploying RescueAI
+
+Local setup is [README.md § 9](README.md#9--set-it-up-step-by-step). This is the delta
+for running the same code against a live backend and frontend instead of localhost.
+Nothing in source changes between the two — every URL is read from an env var
+(`backend/app/config.py`, `frontend/src/lib/api.ts`). Deploying is setting values in two
+dashboards plus two one-time external registrations.
+
+## Live deployment
+
+| | URL |
+|---|---|
+| Backend (Render) | https://rescueai-xkhy.onrender.com |
+| Frontend (Vercel) | https://rescue-ai-self.vercel.app |
+
+Both are wired to the `main` branch and redeploy on push. Backend build/start commands
+on Render: `pip install -r requirements.txt` / `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+from the `backend/` root directory.
+
+## What differs from local
+
+| Variable | Local (`backend/.env`) | Production (Render dashboard) |
+|---|---|---|
+| `BACKEND_URL` | `http://localhost:8000` | `https://rescueai-xkhy.onrender.com` |
+| `CORS_ORIGINS` | `http://localhost:5173` | `https://rescue-ai-self.vercel.app` |
+
+| Variable | Local (`frontend/.env`) | Production (Vercel dashboard) |
+|---|---|---|
+| `VITE_API_URL` | empty — Vite proxies to `127.0.0.1:8000` | `https://rescueai-xkhy.onrender.com` |
+
+Everything else (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GEMINI_API_KEY`,
+`CREDENTIAL_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`GOOGLE_CALENDAR_ID`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) is the same value
+in both places — one Supabase project, one Google OAuth client, for both environments.
+If you ever split to a separate production Supabase project, run `backend/schema.sql`
+there first, then every file in `backend/migrations/` in order — `schema.sql` builds a
+fresh database, and the migrations are what bring an existing one forward.
+
+**The scheduler is in-process.** Continuous monitoring runs inside the backend process
+(`app/scheduler.py`), so it only runs while the service is up, and only on one instance.
+If Render ever scales this to more than one, set `SCHEDULER_ENABLED=false` on all but
+one of them — otherwise both pick up the same due project and analyse it twice.
+
+Want the live backend to also accept calls from a local frontend (testing prod data
+against `npm run dev`)? Make `CORS_ORIGINS` a comma list:
+`https://rescue-ai-self.vercel.app,http://localhost:5173`.
+
+## Render — backend environment variables
+
+Set under the service's **Environment** tab:
+
+```env
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...
+GEMINI_API_KEY=AIza...
+LLM_MODEL=gemini-3.8-flash
+CREDENTIAL_ENCRYPTION_KEY=...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_CALENDAR_ID=primary
+BACKEND_URL=https://rescueai-xkhy.onrender.com
+CORS_ORIGINS=https://rescue-ai-self.vercel.app
+```
+
+Render's free tier spins the service down when idle — the first request after a while
+can take 30–60s. `/health` is a cheap way to wake it before a demo.
+
+## Vercel — frontend environment variables
+
+Set under **Project Settings → Environment Variables**, scope **Production**:
+
+```env
+VITE_API_URL=https://rescueai-xkhy.onrender.com
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...
+```
+
+`vercel.json` already rewrites every path to `/index.html` so client-side routes
+(`/app/projects/:id`) don't 404 on refresh — no further Vercel config needed.
+
+## One-time external config
+
+These live outside both dashboards and are easy to forget after the fact — a sign-in or
+Google connect that works locally and fails only in production almost always traces back
+to one of these two.
+
+**1. Google Cloud Console** (console.cloud.google.com/apis/credentials → the OAuth
+client) — add a second Authorized redirect URI alongside the local one:
+
+```
+https://rescueai-xkhy.onrender.com/integrations/google/callback
+```
+
+**2. Supabase Auth** (Authentication → URL Configuration):
+
+- Site URL: `https://rescue-ai-self.vercel.app`
+- Additional Redirect URLs: `http://localhost:5173/*` and `https://rescue-ai-self.vercel.app/*`
+
+Without both entries in the redirect list, a sign-in started on one environment bounces
+back to whichever URL is set as Site URL, regardless of where the user actually is.
+
+## Verifying a deploy
+
+```bash
+curl https://rescueai-xkhy.onrender.com/health        # {"status":"ok"}
+```
+
+Then in the browser: open the Vercel URL, sign in, create (or open) a project, connect
+one app, run **Analyze**. If sign-in redirects to the wrong host, re-check Supabase Auth
+above. If `Analyze` fails with a CORS error in the console, re-check `CORS_ORIGINS` on
+Render. If it 503s naming a variable, that variable is missing on Render, not broken —
+same behavior as local, see [README.md § 12](README.md#12--troubleshooting).

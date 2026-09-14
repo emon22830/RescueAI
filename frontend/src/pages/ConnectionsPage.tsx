@@ -5,6 +5,7 @@ import { Alert } from '../components/ui/Alert'
 import { Card } from '../components/ui/Card'
 import { Icon } from '../components/ui/Icon'
 import { Skeleton } from '../components/ui/Spinner'
+import { SOURCE_ORDER } from '../features/integrations/providers'
 import { ConnectionCard } from '../features/integrations/ConnectionCard'
 import type { IntegrationStatus } from '../features/integrations/types'
 import type { Project } from '../features/projects/types'
@@ -93,8 +94,9 @@ export function ConnectionsPage() {
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2">
-          {[0, 1, 2, 3, 4, 5].map((card) => (
-            <Skeleton key={card} className="h-72 w-full border border-line" />
+          {/* One skeleton per app, so the loading state is the shape of the result. */}
+          {SOURCE_ORDER.map((source) => (
+            <Skeleton key={source} className="h-72 w-full border border-line" />
           ))}
         </div>
       ) : (

@@ -1,5 +1,6 @@
 import type { ConnectIntegrationBody, IntegrationStatus } from '../features/integrations/types'
-import type { Action, Answer, Finding } from '../features/intelligence/types'
+import type { Action, ActionType, Answer, Finding } from '../features/intelligence/types'
+import type { Notification } from '../features/notifications/types'
 import type { AgentRun, Project } from '../features/projects/types'
 import { supabase } from './supabaseClient'
 
@@ -64,16 +65,39 @@ export const api = {
       body: JSON.stringify({ name, goal }),
     }),
 
+  /** Both of these return a *queued* run — the work happens on the server afterwards.
+   *  Poll getRuns until that run's status leaves 'queued' and 'running'. */
   analyzeProject: (id: string) =>
     request<AgentRun>(`/projects/${id}/analyze`, { method: 'POST' }),
 
   syncProject: (id: string) => request<AgentRun>(`/projects/${id}/sync`, { method: 'POST' }),
+
+  /** Minutes between automatic re-analyses, or null to turn monitoring off. */
+  setSchedule: (id: string, minutes: number | null) =>
+    request<Project>(`/projects/${id}/schedule`, {
+      method: 'PUT',
+      body: JSON.stringify({ sync_interval_minutes: minutes }),
+    }),
 
   getFindings: (id: string) => request<Finding[]>(`/projects/${id}/findings`),
 
   getRuns: (id: string) => request<AgentRun[]>(`/projects/${id}/runs`),
 
   getActions: (id: string) => request<Action[]>(`/projects/${id}/actions`),
+
+  /** What this project can be asked to do, given the apps it has connected. */
+  getActionTypes: (id: string) => request<ActionType[]>(`/projects/${id}/actions/types`),
+
+  /** Take one action directly, without waiting for the agent to propose it. Writing it
+   *  is the approval, so it runs in this request and comes back with its result. */
+  createAction: (
+    id: string,
+    body: { integration: string; type: string; target: string; value: string },
+  ) =>
+    request<Action>(`/projects/${id}/actions`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   approveActions: (id: string, actionIds: string[]) =>
     request<Action[]>(`/projects/${id}/actions/approve`, {
@@ -106,6 +130,17 @@ export const api = {
 
   disconnectIntegration: (projectId: string, provider: string) =>
     request<void>(`/projects/${projectId}/integrations/${provider}`, { method: 'DELETE' }),
+
+  // What the agent decided while the user was away. Not scoped to a project: the
+  // point is to surface the project you were not looking at.
+  listNotifications: (unreadOnly = false) =>
+    request<Notification[]>(`/notifications${unreadOnly ? '?unread_only=true' : ''}`),
+
+  markNotificationsRead: (ids: string[]) =>
+    request<Notification[]>('/notifications/read', {
+      method: 'POST',
+      body: JSON.stringify({ notification_ids: ids }),
+    }),
 }
 
 /** Every catch block in the app funnels through this, so no raw Error reaches the UI. */

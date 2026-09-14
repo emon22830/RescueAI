@@ -12,11 +12,12 @@ thing for all six: no row in `integrations`, which is what the empty fake databa
 import httpx
 import pytest
 
-from app.integrations import calendar, drive, github, gmail, linear, slack
+from app.agents import executor
+from app.integrations import asana, calendar, drive, github, gmail, jira, linear, notion, slack, trello
 from app.projects import service
 from tests.fake_db import FakeDatabase
 
-TOKEN_INTEGRATIONS = (slack, linear, github)
+TOKEN_INTEGRATIONS = (slack, linear, github, jira, asana, trello, notion)
 OAUTH_INTEGRATIONS = (gmail, drive, calendar)
 INTEGRATIONS = (*TOKEN_INTEGRATIONS, *OAUTH_INTEGRATIONS)
 
@@ -50,6 +51,22 @@ def test_every_integration_can_collect_and_execute(module):
 def test_token_apps_can_verify_a_credential_before_it_is_stored(module):
     """The connect flow needs this to fail fast on a bad paste, before anything is saved."""
     assert callable(module.verify_token)
+
+
+def test_this_file_covers_every_app_the_workflow_investigates():
+    """The point of this file is that *no* unconnected app reaches the network. A
+    connector added to the graph but not to the tuples above would slip past it."""
+    covered = {module.__name__.rsplit(".", 1)[-1] for module in INTEGRATIONS}
+
+    assert covered == set(executor.INTEGRATIONS)
+
+
+def test_every_token_app_is_connectable_from_the_frontend():
+    """An app with a verify_token that service does not know about can never be
+    connected, however complete the integration itself is."""
+    covered = {module.__name__.rsplit(".", 1)[-1] for module in TOKEN_INTEGRATIONS}
+
+    assert covered == set(service.TOKEN_INTEGRATIONS)
 
 
 @pytest.mark.parametrize("module", OAUTH_INTEGRATIONS, ids=lambda m: m.__name__.rsplit(".", 1)[-1])

@@ -6,17 +6,25 @@ for the user to approve it.
 
 from pydantic import BaseModel
 
+from app.agents import executor
 from app.agents.state import AgentState, Finding, PlannedAction, Source, activity
 from app.ai import llm
 
-SYSTEM = """You are a delivery lead writing a recovery plan for a project that is at risk.
+
+def _action_menu() -> str:
+    """The step types, written from `executor.ACTION_TYPES` rather than kept in step with
+    it by hand. A type the executor cannot run must never appear in this prompt."""
+    width = max(len(action.type) for action in executor.ACTION_TYPES)
+    return "\n".join(
+        f"- {action.integration} / {action.type.ljust(width)}  {action.guidance}"
+        for action in executor.ACTION_TYPES
+    )
+
+
+SYSTEM = f"""You are a delivery lead writing a recovery plan for a project that is at risk.
 
 Each step must be a single concrete action of one of these types:
-- linear / update_issue      target = issue identifier (PAY-124), value = the change to record
-- linear / assign_task       target = issue identifier, value = the person's name or email
-- linear / update_due_date   target = issue identifier, value = the new date as YYYY-MM-DD
-- calendar / create_event    target = attendee emails, comma separated, value = title and purpose
-- gmail / send_email         target = the recipient's email address, value = what to tell them
+{_action_menu()}
 
 Rules:
 - Every step must address exactly one of the findings you were given. Cite it by index.
@@ -24,6 +32,10 @@ Rules:
 - The description says what will happen and why that unblocks the finding, naming the
   people, issues and dates from the evidence rather than speaking in general terms.
 - Order the steps so the most urgent blocker is unblocked first.
+- Use the app the work actually lives in: the issue tracker for work, Slack for telling
+  people, Calendar for a decision that needs the room, email for someone outside the team.
+- Set `params` only for the optional extras a step's own line names. Leave it empty
+  otherwise; never invent a parameter that is not offered.
 - Keep the plan short. Four or five steps is usually enough."""
 
 
@@ -33,6 +45,9 @@ class _PlanStep(BaseModel):
     description: str
     target: str
     value: str
+    # The optional extras a type names in its guidance — team, assignee, due_date,
+    # subject, start, minutes. Strings only: this is a model's answer, not a schema.
+    params: dict[str, str] = {}
     finding_index: int
 
 
@@ -85,5 +100,7 @@ def _to_action(step: _PlanStep, findings: list[Finding], project_id: str) -> Pla
         description=step.description,
         target=step.target,
         reason=reason,
-        params={"value": step.value},
+        # `value` is written last so a model that also put it in params cannot
+        # shadow the field the integrations actually read.
+        params={**step.params, "value": step.value},
     )

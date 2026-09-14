@@ -1,7 +1,7 @@
 import type { Source } from '../../features/intelligence/types'
 
-/* Simplified monochrome marks. One drawing style for all six apps reads as a product
-   that integrates them, rather than a page of pasted logos. */
+/* Simplified monochrome marks. One drawing style for every app reads as a product that
+   integrates them, rather than a page of pasted logos. */
 
 const GLYPHS: Record<Source, React.ReactNode> = {
   slack: (
@@ -50,6 +50,32 @@ const GLYPHS: Record<Source, React.ReactNode> = {
       <circle cx="12" cy="14.8" r="1.1" fill="currentColor" stroke="none" />
     </g>
   ),
+  jira: (
+    <g fill="currentColor">
+      <path d="M11.4 2.2 3.1 10.5a1.3 1.3 0 0 0 0 1.8l4.2 4.2 4.1-4.1Z" opacity="0.45" />
+      <path d="M12.6 21.8l8.3-8.3a1.3 1.3 0 0 0 0-1.8l-4.2-4.2-4.1 4.1Z" />
+    </g>
+  ),
+  asana: (
+    <g fill="currentColor">
+      <circle cx="12" cy="6.1" r="3.5" opacity="0.5" />
+      <circle cx="6.3" cy="16.3" r="3.5" />
+      <circle cx="17.7" cy="16.3" r="3.5" opacity="0.75" />
+    </g>
+  ),
+  trello: (
+    <g fill="none">
+      <rect x="2.8" y="2.8" width="18.4" height="18.4" rx="3.6" fill="currentColor" opacity="0.16" />
+      <rect x="5.9" y="5.9" width="4.6" height="10.2" rx="1.2" fill="currentColor" />
+      <rect x="13.5" y="5.9" width="4.6" height="6.2" rx="1.2" fill="currentColor" />
+    </g>
+  ),
+  notion: (
+    <g stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" fill="none">
+      <rect x="3.2" y="3.2" width="17.6" height="17.6" rx="2.6" />
+      <path d="M8.4 16.2V7.8l7.2 8.4V7.8" strokeLinecap="round" />
+    </g>
+  ),
 }
 
 export const SOURCE_LABELS: Record<Source, string> = {
@@ -57,7 +83,11 @@ export const SOURCE_LABELS: Record<Source, string> = {
   gmail: 'Gmail',
   drive: 'Google Drive',
   linear: 'Linear',
+  jira: 'Jira',
+  asana: 'Asana',
+  trello: 'Trello',
   github: 'GitHub',
+  notion: 'Notion',
   calendar: 'Google Calendar',
 }
 

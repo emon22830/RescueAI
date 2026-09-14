@@ -5,8 +5,9 @@ re-sync replaces what the dashboard shows instead of piling up on top of it.
 The older rows stay in the tables as history.
 """
 
+import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel
@@ -17,12 +18,28 @@ from app.agents.graph import analyze
 from app.agents.state import BLOCKER_SEVERITIES, Evidence, PlannedAction, health_for
 from app.ai import llm
 from app.db.supabase import get_db
-from app.integrations import github, google_auth, linear, slack
+from app.integrations import asana, github, google_auth, jira, linear, notion, slack, trello
 
 # The apps a project connects its own credential for, from the frontend, verified
 # before the token is stored. Gmail/Drive/Calendar stay on the shared backend/.env
 # Google app until Phase 2 makes them per-project too.
-TOKEN_INTEGRATIONS = {"slack": slack, "linear": linear, "github": github}
+TOKEN_INTEGRATIONS = {
+    "slack": slack,
+    "linear": linear,
+    "github": github,
+    "jira": jira,
+    "asana": asana,
+    "trello": trello,
+    "notion": notion,
+}
+
+# The shortest schedule a project may set. Anything faster costs more in API calls than
+# it buys in freshness — nothing in Slack or Linear changes meaningfully in ten minutes.
+MIN_SYNC_MINUTES = 15
+
+HEALTH_WORDS = {"on_track": "On track", "watch": "Watch", "at_risk": "At risk"}
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectNotFound(Exception):
@@ -84,35 +101,72 @@ def delete_project(project_id: str, owner_id: str) -> None:
 # --- analysis ----------------------------------------------------------------
 
 
-def analyze_project(project_id: str, owner_id: str, triggered_by: str = "analyze") -> dict:
-    """Run the agent workflow and save everything it produced.
+# An analysis takes as long as the slowest connected app plus two LLM calls, which is
+# far longer than a browser should be held open. So it is two steps: the request
+# accepts the run and returns it as "queued", and the work happens afterwards — from a
+# background task (api/analysis.py) or from the scheduler (app/scheduler.py). The run
+# row is the handle to both, which is why it is written before any work starts.
 
-    The run row is written first with status "running" so a crash leaves a trace
-    instead of nothing. `triggered_by` separates a first analysis from a re-sync in
-    the run history; the work itself is identical, because a sync *is* a fresh
-    collection from every connected app.
+
+def start_analysis(project_id: str, owner_id: str, triggered_by: str = "analyze") -> dict:
+    """Accept an analysis and return the queued run that will carry its result.
+
+    Nothing is collected here. Writing the run first means the project has a visible
+    pending run the moment the user clicks, instead of a silent gap until the work ends.
     """
-    project = get_project(project_id, owner_id)
-    db = get_db()
-
-    run = (
-        db.table("agent_runs")
-        .insert({"project_id": project_id, "status": "running", "triggered_by": triggered_by})
+    get_project(project_id, owner_id)
+    return (
+        get_db()
+        .table("agent_runs")
+        .insert({"project_id": project_id, "status": "queued", "triggered_by": triggered_by})
         .execute()
         .data[0]
     )
 
+
+def run_analysis(project_id: str, run_id: str) -> dict:
+    """Do the work for a queued run, save everything it produced, and return the run.
+
+    No ownership check and no raising: `start_analysis` already checked the owner, and
+    this runs with no request to fail — a crash is recorded on the run as `failed` and
+    notified, because a background failure nobody is told about is the same as silence.
+    """
+    db = get_db()
+    rows = db.table("projects").select("*").eq("id", project_id).execute().data
+    if not rows:
+        raise ProjectNotFound(f"No project with id {project_id}")
+    project = rows[0]
+
+    # Read before the run overwrites it — this is what "health changed" compares against.
+    previous = _latest_runs([project_id]).get(project_id)
+    db.table("agent_runs").update({"status": "running"}).eq("id", run_id).execute()
+
     try:
         result = analyze(project_id, project["name"], project["goal"])
-    except Exception as error:
-        db.table("agent_runs").update(
-            {"status": "failed", "error": str(error), "completed_at": _now()}
-        ).eq("id", run["id"]).execute()
-        raise
+    except Exception as error:  # noqa: BLE001 — recorded on the run, not swallowed
+        logger.exception("Analysis failed for project %s", project_id)
+        _touch_synced(project_id)
+        run = (
+            db.table("agent_runs")
+            .update({"status": "failed", "error": str(error), "completed_at": _now()})
+            .eq("id", run_id)
+            .execute()
+            .data[0]
+        )
+        _notify(
+            project,
+            run_id,
+            kind="run_failed",
+            severity="danger",
+            title=f"Analysis failed for {project['name']}",
+            body=str(error),
+        )
+        return run
 
-    _save_results(project_id, run["id"], result)
+    _save_results(project_id, run_id, result)
+    _touch_synced(project_id)
 
-    return (
+    run = (
         db.table("agent_runs")
         .update(
             {
@@ -126,10 +180,13 @@ def analyze_project(project_id: str, owner_id: str, triggered_by: str = "analyze
                 "activity": [entry.model_dump(mode="json") for entry in result["agent_activity"]],
             }
         )
-        .eq("id", run["id"])
+        .eq("id", run_id)
         .execute()
         .data[0]
     )
+
+    _notify_verdict(project, run_id, previous, result)
+    return run
 
 
 def _save_results(project_id: str, run_id: str, result: dict) -> None:
@@ -331,26 +388,278 @@ def get_runs(project_id: str, owner_id: str) -> list[dict]:
 
 
 def get_actions(project_id: str, owner_id: str) -> list[dict]:
-    """The recovery plan from the latest completed run, in the order the agent wrote it.
+    """The recovery plan from the latest completed run, plus anything the user did
+    themselves — in the order it was written.
 
-    That order is the plan: the agent puts the most urgent blocker first, so the
-    steps must not come back shuffled.
+    That order is the plan: the agent puts the most urgent blocker first, so the steps
+    must not come back shuffled. Actions a person wrote at the dashboard carry no
+    `run_id`, so they survive a re-sync instead of disappearing with the run they
+    happened to be contemporary with.
     """
     _ensure_owned(project_id, owner_id)
 
     run = _latest_runs([project_id]).get(project_id)
-    if run is None:
-        return []
+    latest_run_id = run["id"] if run else None
 
-    db = get_db()
-    return (
-        db.table("actions")
+    rows = (
+        get_db()
+        .table("actions")
         .select("*")
-        .eq("run_id", run["id"])
+        .eq("project_id", project_id)
         .order("created_at")
         .execute()
         .data
     )
+    # Filtered here rather than in SQL: "this run, or no run at all" is two conditions
+    # PostgREST expresses awkwardly, and this is one small list per project either way.
+    return [row for row in rows if row.get("run_id") in (latest_run_id, None)]
+
+
+def create_action(
+    project_id: str,
+    owner_id: str,
+    integration: str,
+    type: str,
+    target: str,
+    value: str,
+    description: str = "",
+    params: dict | None = None,
+) -> dict:
+    """Take one action against a connected app, written by a person at the dashboard.
+
+    Authored and approved in the same gesture — the user filled in what to send, to
+    what, and pressed the button that says so; there is no second human left to ask.
+    It still goes through the same row, the same states and the same guard in
+    `executor.execute` as anything the agent proposed, so the audit trail does not
+    care which of the two wrote it.
+    """
+    _ensure_owned(project_id, owner_id)
+
+    known = executor.find_type(integration, type)
+    if known is None:
+        raise ValueError(f"There is no '{type}' action for {integration}")
+
+    connected = _connected_for([project_id]).get(project_id, [])
+    if integration not in connected:
+        raise ValueError(f"{integration.title()} is not connected for this project")
+
+    if not target:
+        raise ValueError(f"{known.label} needs {known.target_label.lower()}")
+
+    action = (
+        get_db()
+        .table("actions")
+        .insert(
+            {
+                "project_id": project_id,
+                "run_id": None,
+                "origin": "user",
+                "integration": integration,
+                "type": type,
+                "description": description or known.label,
+                "target": target,
+                "reason": "Taken from the dashboard",
+                "params": {**(params or {}), "value": value},
+                "status": "pending",
+            }
+        )
+        .execute()
+        .data[0]
+    )
+
+    approved = _approve(project_id, [action["id"]])
+    return _execute(approved[0])
+
+
+def action_types(project_id: str, owner_id: str) -> list[dict]:
+    """What this project can actually be asked to do, given what it has connected."""
+    _ensure_owned(project_id, owner_id)
+    connected = _connected_for([project_id]).get(project_id, [])
+    return [action.model_dump() for action in executor.types_for(connected)]
+
+
+# --- scheduling ---------------------------------------------------------------
+#
+# A project can re-analyse itself on an interval. The loop that acts on this lives in
+# app/scheduler.py; everything here is just the reading and writing it needs.
+
+
+def set_schedule(project_id: str, owner_id: str, minutes: int | None) -> dict:
+    """Set how often this project re-analyses itself, or None to turn it off."""
+    _ensure_owned(project_id, owner_id)
+
+    if minutes is not None and minutes < MIN_SYNC_MINUTES:
+        raise ValueError(f"The shortest schedule is every {MIN_SYNC_MINUTES} minutes")
+
+    get_db().table("projects").update({"sync_interval_minutes": minutes}).eq(
+        "id", project_id
+    ).execute()
+    return get_project(project_id, owner_id)
+
+
+def due_projects(now: datetime | None = None) -> list[dict]:
+    """Every scheduled project whose next run is due, for any owner.
+
+    Two queries for all projects, filtered here rather than in SQL: at this scale that
+    is a pair of small scans per tick, where a per-project query would be an N+1 on a
+    timer. A project whose previous run is still going is never due — an analysis that
+    takes longer than its own interval would otherwise stack runs on top of each other.
+    """
+    now = now or datetime.now(timezone.utc)
+    projects = get_db().table("projects").select("*").execute().data
+    busy = _projects_with_a_run_in_flight([project["id"] for project in projects])
+    return [
+        project
+        for project in projects
+        if project["id"] not in busy and _is_due(project, now)
+    ]
+
+
+def _projects_with_a_run_in_flight(project_ids: list[str]) -> set[str]:
+    if not project_ids:
+        return set()
+
+    runs = (
+        get_db()
+        .table("agent_runs")
+        .select("project_id,status")
+        .in_("project_id", project_ids)
+        .execute()
+        .data
+    )
+    return {run["project_id"] for run in runs if run["status"] in ("queued", "running")}
+
+
+def _is_due(project: dict, now: datetime) -> bool:
+    interval = project.get("sync_interval_minutes")
+    if not interval:
+        return False
+
+    last = project.get("last_synced_at")
+    if not last:
+        return True
+    return _as_datetime(last) + timedelta(minutes=interval) <= now
+
+
+def _touch_synced(project_id: str) -> None:
+    """Stamp the project as synced. Written whether the run succeeded or failed, so a
+    project whose Slack token has expired retries on its schedule instead of every tick.
+
+    Never allowed to fail the run around it. This is the one write that a database still
+    on the pre-scheduling schema does not have a column for, and an analysis that
+    finished is worth more than the timestamp saying when — the run itself already
+    records that. `due_projects` skips anything still in flight, so a missing stamp
+    cannot turn into a project re-analysing itself every tick.
+    """
+    try:
+        get_db().table("projects").update({"last_synced_at": _now()}).eq(
+            "id", project_id
+        ).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Could not stamp last_synced_at on project %s — has migration "
+            "0002_scheduling_and_notifications.sql been run?",
+            project_id,
+        )
+
+
+# --- notifications -------------------------------------------------------------
+#
+# What the agent concluded while nobody was watching. These are in-app only: posting a
+# change into Slack would be writing to someone's workspace without approval, which is
+# what the approval flow exists to prevent.
+
+
+def list_notifications(owner_id: str, unread_only: bool = False) -> list[dict]:
+    query = (
+        get_db()
+        .table("notifications")
+        .select("*")
+        .eq("owner_id", owner_id)
+        .order("created_at", desc=True)
+        .limit(50)
+    )
+    rows = query.execute().data
+    return [row for row in rows if row.get("read_at") is None] if unread_only else rows
+
+
+def mark_notifications_read(owner_id: str, notification_ids: list[str]) -> list[dict]:
+    """Mark the given notifications read. Ids belonging to someone else are ignored
+    rather than refused, so one stale id cannot fail the whole request."""
+    if not notification_ids:
+        return []
+
+    db = get_db()
+    mine = [
+        row["id"]
+        for row in db.table("notifications")
+        .select("id")
+        .eq("owner_id", owner_id)
+        .in_("id", notification_ids)
+        .execute()
+        .data
+    ]
+    for notification_id in mine:
+        db.table("notifications").update({"read_at": _now()}).eq("id", notification_id).execute()
+    return list_notifications(owner_id)
+
+
+def _notify_verdict(project: dict, run_id: str, previous: dict | None, result: dict) -> None:
+    """Tell the owner what changed, and only what changed.
+
+    A run that concluded the same thing as the one before it is not news, so the only
+    notification worth writing is a health change — plus the first time a project is
+    found at risk, which is the moment somebody needs to look.
+    """
+    health = result["health"]
+    was = (previous or {}).get("health")
+    if was == health:
+        return
+
+    severity = {"at_risk": "danger", "watch": "warn"}.get(health, "info")
+    blockers = sum(
+        1 for finding in result["findings"] if finding.severity in BLOCKER_SEVERITIES
+    )
+    kind = "blockers_found" if health == "at_risk" and blockers else "health_changed"
+    moved = f"{HEALTH_WORDS.get(was, 'Not yet analysed')} → {HEALTH_WORDS[health]}"
+
+    _notify(
+        project,
+        run_id,
+        kind=kind,
+        severity=severity,
+        title=f"{project['name']} is now {HEALTH_WORDS[health]}",
+        body=result["summary"] or moved,
+    )
+
+
+def _notify(project: dict, run_id: str, kind: str, severity: str, title: str, body: str) -> None:
+    """One notification. Never allowed to fail a run — the analysis already succeeded,
+    and losing the alert is better than losing the result it was about."""
+    try:
+        get_db().table("notifications").insert(
+            {
+                "project_id": project["id"],
+                "owner_id": project["owner_id"],
+                "run_id": run_id,
+                "kind": kind,
+                "severity": severity,
+                "title": title,
+                "body": body[:1000],
+            }
+        ).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not write notification for project %s", project["id"])
+
+
+def _as_datetime(value: str | datetime) -> datetime:
+    """Supabase hands timestamps back as ISO strings; the fake database keeps them as
+    whatever was written. Either way the comparison needs an aware datetime."""
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 # --- approval and execution --------------------------------------------------

@@ -31,6 +31,12 @@ export const Icon = {
       <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z" />
     </Stroke>
   ),
+  Bell: (p: Props) => (
+    <Stroke {...p}>
+      <path d="M18 8a6 6 0 1 0-12 0c0 5-2 6-2 6h16s-2-1-2-6" />
+      <path d="M13.7 20a2 2 0 0 1-3.4 0" />
+    </Stroke>
+  ),
   Plus: (p: Props) => (
     <Stroke {...p}>
       <path d="M12 5v14M5 12h14" />

@@ -5,7 +5,7 @@ const STEPS = [
   {
     icon: Icon.Search,
     title: 'Collect the evidence',
-    body: 'Three investigator agents read your connected apps in parallel and normalize everything they find into one shape.',
+    body: 'Four investigator agents read your connected apps in parallel and normalize everything they find into one shape — what people said, what was built, what the plan says, what was agreed.',
   },
   {
     icon: Icon.Layers,
@@ -20,7 +20,7 @@ const STEPS = [
   {
     icon: Icon.Shield,
     title: 'You approve, then it acts',
-    body: 'Nothing reaches Linear, Gmail or Calendar until you tick it. Every step reports back what the app actually said.',
+    body: 'Nothing reaches your Slack, your tracker or your calendar until you tick it. Every step reports back what the app actually said.',
   },
 ]
 

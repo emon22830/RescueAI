@@ -1,33 +1,37 @@
 import { SOURCE_LABELS, SourceIcon } from '../../components/ui/SourceIcon'
+import { plural } from '../../lib/format'
 import type { Source } from '../intelligence/types'
 import { SOURCE_ORDER } from './providers'
 
 /**
- * All six apps at a glance: solid where this project can reach it, faded where it
- * cannot. A faded icon is the honest signal that the agent will skip that app.
+ * Which apps this project is actually reading.
+ *
+ * Only the connected ones. A team runs one tracker, not four, so fading out the eight
+ * it will never connect would read as eight things wrong with the project — and at ten
+ * apps the row stopped fitting a card on a phone. What is still available to connect is
+ * the Connections page's job, where there is room to say it properly.
  */
 export function ConnectorStrip({ connected }: { connected: Source[] }) {
+  const apps = SOURCE_ORDER.filter((source) => connected.includes(source))
+
+  if (apps.length === 0) {
+    return <span className="text-xs text-faint">No apps connected — the agent has nothing to read</span>
+  }
+
   return (
-    <div className="flex items-center gap-2">
-      <span className="flex items-center gap-1">
-        {SOURCE_ORDER.map((source) => {
-          const on = connected.includes(source)
-          return (
-            <span
-              key={source}
-              title={`${SOURCE_LABELS[source]} — ${on ? 'connected' : 'not connected'}`}
-              className={`flex h-6 w-6 items-center justify-center rounded-md ring-1 ring-inset transition-colors duration-150 ${
-                on ? 'bg-raised text-ink ring-line' : 'text-faint opacity-45 ring-transparent'
-              }`}
-            >
-              <SourceIcon source={source} className="h-3.5 w-3.5" />
-            </span>
-          )
-        })}
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="flex flex-wrap items-center gap-1">
+        {apps.map((source) => (
+          <span
+            key={source}
+            title={`${SOURCE_LABELS[source]} — connected`}
+            className="flex h-6 w-6 items-center justify-center rounded-md bg-raised text-ink ring-1 ring-inset ring-line"
+          >
+            <SourceIcon source={source} className="h-3.5 w-3.5" />
+          </span>
+        ))}
       </span>
-      <span className="text-xs text-faint">
-        {connected.length}/{SOURCE_ORDER.length} connected
-      </span>
+      <span className="text-xs text-faint">{plural(apps.length, 'app')} connected</span>
     </div>
   )
 }

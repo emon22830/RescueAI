@@ -7,7 +7,16 @@ from typing import Annotated, Literal, TypedDict
 
 from pydantic import BaseModel, Field
 
-Source = Literal["slack", "gmail", "drive", "linear", "github", "calendar"]
+Source = Literal[
+    # what people said
+    "slack", "gmail",
+    # what was built
+    "github",
+    # what was planned and tracked
+    "linear", "jira", "asana", "trello",
+    # what was agreed
+    "drive", "notion", "calendar",
+]
 Severity = Literal["low", "medium", "high", "critical"]
 Health = Literal["on_track", "watch", "at_risk"]
 

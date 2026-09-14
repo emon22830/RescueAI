@@ -274,3 +274,258 @@ later.
 
 Cost: connecting Google is now a redirect, not a form, and `BACKEND_URL` must match the
 redirect URI registered on the OAuth client exactly or Google refuses the round trip.
+
+---
+
+## ADR-0015 — An analysis is accepted, not awaited
+**2026-09-14 · active**
+
+**Context.** `POST /analyze` ran the whole graph inside the request: six external APIs,
+then two LLM calls. Against stubs that is a few milliseconds; against a real workspace
+with Slack history, a Drive export and a Linear query it is minutes, and every proxy and
+browser between the user and the app has an opinion about a request that long. The
+synchronous design also meant a crash surfaced as a bare 500, and the run row it left
+behind said `running` forever.
+
+**Decision.** The request writes the run as `queued` and returns **202** with it. The
+work happens afterwards — from a FastAPI `BackgroundTasks` for a user-triggered run, or
+from the scheduler for a timed one. `start_analysis` (checks ownership, writes the row)
+and `run_analysis` (does the work, no ownership check — the row is proof it was already
+checked) are the two halves. The run row is the handle: the frontend polls `/runs` until
+its status leaves `queued`/`running`.
+
+**Consequence.** A failure is now recorded *on the run* — `status: failed`, `error`,
+`completed_at` — and notified, rather than raised at a caller who has already left. That
+is the only correct behaviour for a scheduled run, where there is no caller at all.
+
+Four tests changed to match: `/analyze` returns 202 with a queued run, and the finished
+run is read back from `/runs`. TestClient runs background tasks before returning the
+response, so tests read the completed run on the very next call with no waiting.
+
+`status` gained `queued` and `triggered_by` gained `schedule`, both as check-constraint
+changes in migration 0002. `AgentRunResponse` and the frontend's `AgentRun` mirror them.
+
+Cost: the UI is now a poller. `ProjectPage` re-reads every 3s while a run is in flight
+and stops when it is not, and anything that renders a run must handle a run with no
+counts yet — `LatestAnalysis` used to label anything not failed as "Completed", which
+would have been a lie about a queued run.
+
+---
+
+## ADR-0016 — The scheduler is one in-process loop, not a queue
+**2026-09-14 · active**
+
+**Context.** A tool that only looks when somebody clicks is not monitoring anything. The
+product promise is that it tells you your project is on fire; that requires it to run
+while nobody is watching. The obvious answers — Celery, RQ, APScheduler, a cron service
+— all mean a broker, a worker process and a deployment topology, against a hard rule in
+`CLAUDE.md` that says no extra layers and a junior must be able to follow any file.
+
+**Decision.** One `asyncio` task, started and stopped by the FastAPI lifespan, in
+`app/scheduler.py`. Each tick asks `service.due_projects()` what is due and runs each one
+to completion in a worker thread (`asyncio.to_thread`) — the whole analysis path is
+blocking, so running it on the event loop would freeze every request while a project is
+analysed. Projects run one after another, not fanned out, because a tick that hits every
+integration at the same minute is how a rate limit gets found.
+
+**Consequence.** No new dependency, no second process, one file to read. The cost is
+honest and written at the top of that file: **this holds for a single instance only.**
+Two processes would both pick up the same due project. `SCHEDULER_ENABLED=false` turns
+it off on a second instance, and the day this needs to scale, that file is where a lock
+or a real queue goes.
+
+`due_projects` also skips any project with a `queued` or `running` run. Without that, an
+analysis that takes longer than its own interval would stack runs on itself — and on a
+database where `last_synced_at` cannot be written, it would run every single tick.
+
+The floor is 15 minutes (`MIN_SYNC_MINUTES`). Below that costs more in API calls than it
+buys in freshness; nothing in Slack or Linear changes meaningfully in ten minutes.
+
+---
+
+## ADR-0017 — A changed verdict is told in the app, never posted to Slack
+**2026-09-14 · active**
+
+**Context.** Monitoring is only useful if somebody hears the result. The natural place
+to put "your project is now At risk" is the Slack channel the team already watches — and
+the project already holds a Slack token with `chat:write` for exactly that.
+
+**Decision.** Notifications are in-app only: a row in `notifications`, a bell in the app
+shell. Nothing is posted to a connected workspace.
+
+**Consequence.** This is `CLAUDE.md`'s "nothing writes to an external app without human
+approval" applied to ourselves. An alert is a write, and a per-project "notify me in
+Slack" toggle would be standing approval for a message whose contents nobody has seen —
+which is precisely what the approval gate exists to prevent. The recovery plan can still
+*propose* `slack/post_message`, and a human still approves that one by one.
+
+Only a *change* is notified. A run that concluded the same thing as the one before it is
+not news, and a notification per tick would train the user to ignore all of them. A
+failed run is always notified, because a background failure nobody is told about is
+indistinguishable from silence.
+
+`_notify` can never fail the run around it: the analysis already succeeded, and losing
+the alert is better than losing the result it was about. The same reasoning protects
+`_touch_synced`, which is the one write a pre-migration database has no column for.
+
+Cost: someone who does not open the app does not hear anything. An email digest is the
+follow-up, and it is a write to an address the user gave us, not to a shared workspace.
+
+---
+
+## ADR-0018 — One catalog is the contract between planner, API and UI
+**2026-09-14 · active**
+
+**Context.** What the system can do to a connected app was written down in three places
+that had no way of agreeing: the `if action.type == …` chain inside each integration, a
+hand-written list in the recovery prompt, and — once the dashboard could take actions —
+whatever the frontend decided to offer. The prompt already listed `slack / post_message`
+for weeks before `slack.execute_action` could do it, which is exactly the failure mode:
+the agent proposes a step, a human approves it, and only then does it turn out that
+nothing can run it.
+
+**Decision.** `executor.ACTION_TYPES` is the single list. Each entry carries the
+integration, the type, the **verb** a project manager would use (`add`, `update`,
+`delegate`, `close`, `message`), a label, what `target` means for that type, what
+`params.value` means, and the guidance line for the model. The recovery prompt is
+generated from it at import time; `GET /actions/types` serves it filtered to the apps a
+project has connected; `execute` dispatches on it.
+
+**Consequence.** Adding an action is one entry plus one branch in that integration —
+and a test fails if you forget the branch. `test_every_catalogued_action_type_is_
+actually_dispatchable` calls every catalogued type with empty arguments and fails on
+`NotImplementedError` specifically; anything else means the type was recognised and then
+refused on its arguments, which is correct. A second test asserts the prompt contains
+every catalogued type. Verified by deliberately adding a bogus entry and watching both
+fail.
+
+Executor was the right home: it is already the module that maps an action to an
+integration, so knowing what each accepts is its existing job, not a new layer.
+
+Cost: `executor` now imports pydantic and `recovery` imports `executor`. The import
+graph stays acyclic because the integrations' dependency on `service` is lazy.
+
+---
+
+## ADR-0019 — A user can act without the agent proposing it first
+**2026-09-14 · active**
+
+**Context.** Every action had to originate in a recovery plan. A manager who can already
+see that the payments channel needs telling had to run an analysis, wait for the agent
+to happen to propose that step, and then approve it. For the apps the product is built
+around — an issue tracker and a chat tool — that is a worse experience than the tools
+themselves.
+
+**Decision.** `POST /projects/{id}/actions` creates an action a person wrote and runs it
+in the same request. Writing it *is* the approval: the user chose the app, the target
+and the words, and pressed a button that named what it would do. There is no second
+human left to ask.
+
+It is deliberately **not** a separate execution path. The row is inserted as `pending`,
+goes through the same `_approve`, and reaches the same `executor.execute` guard that
+refuses anything not `approved`. `origin` (`agent` | `user`) records which of the two
+wrote it, and the UI says "You" or "Agent" on every result.
+
+**Consequence.** `actions.run_id` becomes nullable — a dashboard action may exist before
+the project has ever been analysed. That in turn changes `get_actions`, which now
+returns the latest run's plan *plus* every action with no run, so a manual action
+survives a re-sync instead of disappearing with the run it was contemporary with.
+
+The composer only offers what the project has connected, because offering an app that
+will certainly fail is worse than offering nothing. An unknown type or an unconnected
+app is a 400 with the reason, not a 500.
+
+This does not weaken [[adr-0017]] or the rule it comes from. Nothing writes to an
+external app without a human deciding: the difference is only whether the human is
+approving a sentence the model wrote or one they wrote themselves.
+
+---
+
+## ADR-0020 — What a team built and what its plan says are different agents
+**2026-09-14 · active**
+
+**Context.** `engineering` read GitHub *and* Linear. Adding Jira, Asana and Trello would
+have made it a five-app node, and the node's own question — "what has actually been
+built?" — is not the question a task tracker answers. A tracker says what somebody
+*intends*; commits say what exists.
+
+**Decision.** A fourth investigator, `delivery`, reads every tracker — Linear, Jira,
+Asana, Trello. `engineering` keeps GitHub alone. `requirements` gains Notion beside
+Drive and Calendar.
+
+**Consequence.** The gap this product exists to find — the plan says shipped, the repo
+says nothing has landed — now has the two halves collected by different agents and
+logged as different lines in the run's activity. A user reading the log sees "delivery:
+4 items, engineering: 0 items" and has learned something.
+
+Four nodes fan out in parallel where three did, so a project connecting a tracker and a
+repo collects them concurrently rather than one after the other.
+
+It moves `Linear` out of `engineering`, which changed the agent names in the activity
+log. The tests that asserted those names now derive them from `supervisor.AGENTS`, and
+the ones that counted six apps derive from `executor.INTEGRATIONS` — so the next
+connector does not mean editing assertions by hand.
+
+---
+
+## ADR-0021 — Four trackers, because a team only uses one
+**2026-09-14 · active**
+
+**Context.** The product assumed Linear. Linear is a startup tool; most of the industry
+runs Jira, and plenty of teams run Asana or Trello instead of either. A rescue tool that
+cannot read the tracker a team actually uses cannot see the plan at all, which is half
+its evidence.
+
+**Decision.** Jira, Asana and Trello alongside Linear, plus Notion beside Drive for
+specs. All four are token apps on the existing per-project model — no new environment
+variable, no shared credential, nothing in `.env`.
+
+**Consequence.** Three shapes that are easy to get wrong and invisible until a live
+token is in play, each now pinned by a test:
+
+- **Jira's search endpoint moved.** `/rest/api/3/search` was deprecated in May 2025 and
+  fully removed by the end of October 2025; it is `/rest/api/3/search/jql`, paging on
+  `nextPageToken`, and it returns *only* an id and a key unless `fields` is passed
+  explicitly. Code written from memory against the old endpoint collects nothing and
+  says nothing about why.
+- **Jira's text is not text.** The v3 API speaks Atlassian Document Format, so a
+  description read back is a tree and a comment sent is a tree. `_adf` and `_adf_text`
+  are the two ends of that.
+- **Jira has no settable status.** Closing is a transition, and which transition means
+  closed is a per-workflow question — so a named one wins and otherwise the first one
+  into the `done` status category is used.
+
+Trello authenticates with a pair. Its API key identifies the application rather than the
+user and Trello's own docs ship it in client-side code, so it is stored as metadata like
+`repo` or `site`; the token beside it is the secret half and is encrypted like every
+other credential. That distinction is now written into `integration-rules.md`, because
+the next app with two credentials may not split the same way.
+
+Asana's own task search is a paid feature, so collection finds the Asana *project* by
+typeahead and then reads that project's tasks. Typeahead is explicitly "fast, not
+exhaustive" in Asana's docs — fine for locating a project, not fine for collecting the
+evidence itself.
+
+Notion only returns pages its integration has been shared with, so an empty result
+usually means nobody added it to the page. That is what the log now says, rather than
+leaving it to look like the project has no spec.
+
+---
+
+## ADR-0022 — The test suite may not touch the real database
+**2026-09-14 · active**
+
+**Context.** `conftest.py`'s `db` fixture was opt-in. Tests that did not ask for it —
+`test_graph.py`, among others — ran against whatever `service.get_db()` returned, which
+with a filled-in `backend/.env` is the live Supabase project. It went unnoticed while
+every integration was unimplemented. Adding four connectors that each look up a stored
+credential made it four more live queries per test, and the suite's runtime jumped from
+1.1s to 2.7s.
+
+**Decision.** The `db` fixture is `autouse=True`. Every test gets a fresh in-memory
+database whether it asks for one or not; the ones that need to inspect it still request
+`db` and get the same instance.
+
+**Consequence.** The suite is hermetic and runs in 0.4s. More importantly, a test can no
+longer read or write the real project's data by forgetting a fixture — which was a real
+risk the moment an integration test touched a write path.

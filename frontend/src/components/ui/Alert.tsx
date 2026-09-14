@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react'
 
-type Tone = 'danger' | 'warn' | 'info'
+type Tone = 'danger' | 'warn' | 'info' | 'success'
 
 const TONES: Record<Tone, string> = {
   danger: 'border-danger/30 bg-danger-soft text-danger',
   warn: 'border-warn/30 bg-warn-soft text-warn',
   info: 'border-brand/25 bg-brand-soft text-brand-soft-ink',
+  success: 'border-success/30 bg-success-soft text-success',
 }
 
 /** Shows what the API actually said. Never a friendly rewrite of a real error. */

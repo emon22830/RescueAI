@@ -9,7 +9,7 @@ status: active
 
 A project's real state is never in one place. Linear says *In Progress*. The Slack thread
 says the API contract changed three weeks ago. The spec in Drive still describes the old
-one. Nobody is lying — nobody is looking at all six places at once.
+one. Nobody is lying — nobody is looking at every place at once.
 
 This is not a chatbot that answers questions about projects. It is a system that
 continuously rebuilds a project's state from evidence. Chat is one view onto that state;

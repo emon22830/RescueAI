@@ -7,7 +7,7 @@ from app.agents.state import AgentState, Evidence, activity
 
 Collector = Callable[[str, str], list[Evidence]]
 
-AGENTS = ("communication", "engineering", "requirements")
+AGENTS = ("communication", "engineering", "delivery", "requirements")
 
 
 def run(state: AgentState) -> dict:

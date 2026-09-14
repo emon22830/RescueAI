@@ -76,13 +76,45 @@ def create_event(
     return response.json()
 
 
+def update_event(project_id: str, event_id: str, changes: dict) -> dict:
+    """Change an existing event. Attendees are notified, because a meeting that moved
+    without telling anyone is worse than one that did not move."""
+    response = httpx.patch(
+        f"{API}/{settings.google_calendar_id}/events/{event_id}",
+        params={"sendUpdates": "all"},
+        json=changes,
+        headers=google_auth.headers(project_id),
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def cancel_event(project_id: str, event_id: str) -> None:
+    """Cancel an event and tell everyone who was invited."""
+    response = httpx.delete(
+        f"{API}/{settings.google_calendar_id}/events/{event_id}",
+        params={"sendUpdates": "all"},
+        headers=google_auth.headers(project_id),
+        timeout=TIMEOUT,
+    )
+    # A calendar that already forgot the event is the state we wanted anyway.
+    if response.status_code not in (200, 204, 404, 410):
+        response.raise_for_status()
+
+
 def execute_action(action: PlannedAction) -> str:
     """Perform one approved action and return a short human-readable result.
 
-    `target` is the attendee list and `value` is the meeting title and purpose.
-    A plan may set params.start (ISO 8601) and params.minutes; without a start
-    the meeting is booked for 10:00 UTC tomorrow so a human can move it.
+    For `create_event`, `target` is the attendee list and `value` is the meeting title
+    and purpose; a plan may set params.start (ISO 8601) and params.minutes, and without
+    a start the meeting is booked for 10:00 UTC tomorrow so a human can move it.
+    For `update_event` and `cancel_event`, `target` is the event id.
     """
+    if action.type == "update_event":
+        return _reschedule(action)
+    if action.type == "cancel_event":
+        return _cancel(action)
     if action.type != "create_event":
         raise NotImplementedError(f"Google Calendar action not implemented: {action.type}")
 
@@ -104,6 +136,41 @@ def execute_action(action: PlannedAction) -> str:
     )
     invited = ", ".join(attendees) or "no attendees"
     return f"Booked \"{event['summary']}\" for {start:%d %b %H:%M UTC} with {invited} — {event.get('htmlLink')}"
+
+
+def _reschedule(action: PlannedAction) -> str:
+    """Move or retitle a meeting. A start with no explicit length keeps the default."""
+    if not action.target:
+        raise ValueError("Calendar update_event needs a target (the event id)")
+
+    changes: dict = {}
+    if summary := action.params.get("summary"):
+        changes["summary"] = summary
+    if given := action.params.get("start"):
+        start = _start_time(str(given))
+        minutes = int(action.params.get("minutes", DEFAULT_MEETING_MINUTES))
+        changes["start"] = {"dateTime": start.isoformat()}
+        changes["end"] = {"dateTime": (start + timedelta(minutes=minutes)).isoformat()}
+    if not changes:
+        raise ValueError(
+            "Calendar update_event needs params.start or params.summary — "
+            "there is nothing to change otherwise"
+        )
+
+    event = update_event(action.project_id, action.target, changes)
+    when = _when(event.get("start", {})) or "its existing time"
+    return f"Moved \"{event.get('summary', 'the meeting')}\" to {when} — {event.get('htmlLink')}"
+
+
+def _cancel(action: PlannedAction) -> str:
+    if not action.target:
+        raise ValueError("Calendar cancel_event needs a target (the event id)")
+
+    cancel_event(action.project_id, action.target)
+    reason = action.params.get("value", "").strip()
+    return f"Cancelled event {action.target} and notified the attendees" + (
+        f" — {reason}" if reason else ""
+    )
 
 
 def _start_time(given: str | None) -> datetime:

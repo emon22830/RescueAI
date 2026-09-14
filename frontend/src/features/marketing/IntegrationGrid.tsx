@@ -4,7 +4,19 @@ import { PROVIDERS, SOURCE_ORDER } from '../integrations/providers'
 import type { Source } from '../intelligence/types'
 import { Section, SectionIntro } from './Section'
 
-const WRITES: Source[] = ['linear', 'gmail', 'calendar']
+/** The apps an approved step can actually be executed against. Drive is the one that
+ *  only ever collects. Mirrors executor.WRITE_TARGETS. */
+const WRITES: Source[] = [
+  'slack',
+  'gmail',
+  'github',
+  'linear',
+  'jira',
+  'asana',
+  'trello',
+  'notion',
+  'calendar',
+]
 
 export function IntegrationGrid() {
   return (
@@ -13,7 +25,7 @@ export function IntegrationGrid() {
         eyebrow="Integrations"
         title="Connect the tools your team already uses"
       >
-        Every app is read-only by default. Three of them can also carry out an approved step —
+        Every app is read-only by default. Nine of them can also carry out an approved step —
         and only a step you ticked yourself.
       </SectionIntro>
 

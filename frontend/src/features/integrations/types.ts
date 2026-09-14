@@ -23,9 +23,16 @@ export interface IntegrationStatus {
   variables: string[]
 }
 
-/** What the connect form sends. `repo` is GitHub only, `channel_ids` Slack only. */
+/** What the connect form sends: the credential, plus whatever else that one app needs
+ *  to be reachable. Which extras apply to which app is declared in `EXTRA_FIELDS`.
+ *  Mirrors ConnectIntegrationRequest in app/api/integrations.py. */
 export interface ConnectIntegrationBody {
   token: string
-  repo?: string
-  channel_ids?: string
+  repo?: string // github
+  channel_ids?: string // slack, optional
+  site?: string // jira
+  email?: string // jira
+  project_key?: string // jira, optional
+  key?: string // trello — the API key paired with the token
+  workspace?: string // asana, optional
 }

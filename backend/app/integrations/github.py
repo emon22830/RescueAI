@@ -174,8 +174,100 @@ def recent_issues(repo: str, since: datetime, token: str) -> list[dict]:
 
 
 def execute_action(action: PlannedAction) -> str:
-    """Perform one approved action and return a short human-readable result."""
+    """Perform one approved action and return a short human-readable result.
+
+    `create_issue` uses `target` as the title and `params.value` as the body;
+    `comment_issue` uses `target` as the issue number (123 or #123) and
+    `params.value` as the comment.
+    """
+    from app.projects import service
+
+    credential = service.get_integration_credential(action.project_id, "github")
+    if credential is None:
+        raise RuntimeError("GitHub is not connected for this project")
+
+    token = credential["token"]
+    repo = credential.get("repo", "")
+    if not repo:
+        raise RuntimeError("This project connected GitHub without a repository")
+
+    body = action.params.get("value")
+    if action.type == "create_issue":
+        if not action.target:
+            raise ValueError("GitHub create_issue needs a target (the issue title)")
+        return create_issue(repo, action.target, body or action.description, token)
+
+    if action.type == "comment_issue":
+        if not action.target or not body:
+            raise ValueError(
+                "GitHub comment_issue needs a target (the issue number) and params.value"
+            )
+        return comment_on_issue(repo, action.target, body, token)
+
+    if action.type == "assign_issue":
+        if not action.target or not body:
+            raise ValueError(
+                "GitHub assign_issue needs a target (the issue number) and params.value "
+                "(the GitHub usernames)"
+            )
+        return assign_issue(repo, action.target, body, token)
+
+    if action.type == "close_issue":
+        if not action.target:
+            raise ValueError("GitHub close_issue needs a target (the issue number)")
+        return close_issue(repo, action.target, body or "", token)
+
     raise NotImplementedError(f"GitHub action not implemented: {action.type}")
+
+
+def create_issue(repo: str, title: str, body: str, token: str) -> str:
+    """Open one issue and return its number and URL."""
+    issue = _post(f"/repos/{repo}/issues", {"title": title, "body": body}, token)
+    return f"Opened {repo}#{issue['number']} — {issue['html_url']}"
+
+
+def comment_on_issue(repo: str, number: str, body: str, token: str) -> str:
+    """Comment on an existing issue or pull request."""
+    issue_number = _issue_number(number, "comment_issue")
+    comment = _post(f"/repos/{repo}/issues/{issue_number}/comments", {"body": body}, token)
+    return f"Commented on {repo}#{issue_number} — {comment['html_url']}"
+
+
+def assign_issue(repo: str, number: str, people: str, token: str) -> str:
+    """Hand an issue to one or more people, by GitHub username."""
+    issue_number = _issue_number(number, "assign_issue")
+    logins = [name.strip().lstrip("@") for name in people.split(",") if name.strip()]
+    if not logins:
+        raise ValueError("GitHub assign_issue needs at least one username")
+
+    issue = _post(f"/repos/{repo}/issues/{issue_number}/assignees", {"assignees": logins}, token)
+    # GitHub silently drops a username that cannot be assigned, so report who it took.
+    assigned = [user["login"] for user in issue.get("assignees", [])]
+    if not assigned:
+        raise GitHubError(
+            f"{repo}#{issue_number}: GitHub assigned nobody — "
+            f"{', '.join(logins)} cannot be assigned to this repository"
+        )
+    return f"Assigned {repo}#{issue_number} to {', '.join(assigned)} — {issue['html_url']}"
+
+
+def close_issue(repo: str, number: str, comment: str, token: str) -> str:
+    """Close an issue, leaving a comment first when one was given — a closed issue with
+    no explanation is the thing everyone complains about."""
+    issue_number = _issue_number(number, "close_issue")
+    if comment:
+        comment_on_issue(repo, issue_number, comment, token)
+
+    issue = _patch(f"/repos/{repo}/issues/{issue_number}", {"state": "closed"}, token)
+    return f"Closed {repo}#{issue_number} — {issue['html_url']}"
+
+
+def _issue_number(number: str, action_type: str) -> str:
+    """People paste "#124", "124" or a URL's tail. GitHub only takes the digits."""
+    cleaned = str(number).strip().lstrip("#")
+    if not cleaned.isdigit():
+        raise ValueError(f"GitHub {action_type} needs an issue number, got '{number}'")
+    return cleaned
 
 
 # --- normalization -----------------------------------------------------------
@@ -258,6 +350,27 @@ def _issue_evidence(issue: dict) -> Evidence:
             "comments": issue.get("comments", 0),
         },
     )
+
+
+def _post(path: str, payload: dict, token: str) -> dict:
+    """A write call. GitHub reports refusals with a status code, so raise_for_status
+    is the whole error contract — the message it carries is the one the user sees."""
+    response = httpx.post(
+        f"{API}{path}",
+        json=payload,
+        headers=_headers(token),
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _patch(path: str, payload: dict, token: str) -> dict:
+    response = httpx.patch(
+        f"{API}{path}", json=payload, headers=_headers(token), timeout=TIMEOUT
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def _get(path: str, params: dict, token: str) -> list[dict]:

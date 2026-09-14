@@ -8,6 +8,9 @@ create table if not exists projects (
   owner_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   goal text not null,
+  -- How often the agent re-analyses this project on its own. null = manual only.
+  sync_interval_minutes int check (sync_interval_minutes is null or sync_interval_minutes >= 15),
+  last_synced_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -24,7 +27,7 @@ create table if not exists integrations (
   provider text not null check (
     -- 'google' is one row covering Gmail, Drive and Calendar: they are three APIs
     -- behind a single OAuth consent, so they share one refresh token.
-    provider in ('slack', 'linear', 'github', 'google')
+    provider in ('slack', 'linear', 'github', 'google', 'jira', 'notion', 'asana', 'trello')
   ),
   encrypted_token text not null,
   metadata jsonb not null default '{}',
@@ -43,8 +46,11 @@ create index if not exists integrations_project_idx on integrations (project_id)
 create table if not exists agent_runs (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
-  status text not null check (status in ('running', 'completed', 'failed')),
-  triggered_by text not null default 'analyze' check (triggered_by in ('analyze', 'sync')),
+  -- queued = accepted and not yet started; the API returns before the work runs.
+  status text not null check (status in ('queued', 'running', 'completed', 'failed')),
+  triggered_by text not null default 'analyze' check (
+    triggered_by in ('analyze', 'sync', 'schedule')
+  ),
   started_at timestamptz not null default now(),
   completed_at timestamptz,
   evidence_count int,
@@ -61,7 +67,8 @@ create table if not exists evidence (
   project_id uuid not null references projects(id) on delete cascade,
   run_id uuid not null references agent_runs(id) on delete cascade,
   source text not null check (
-    source in ('slack', 'gmail', 'drive', 'linear', 'github', 'calendar')
+    source in ('slack', 'gmail', 'drive', 'linear', 'github', 'calendar',
+               'jira', 'notion', 'asana', 'trello')
   ),
   type text not null,
   title text not null,
@@ -90,9 +97,15 @@ create table if not exists findings (
 create table if not exists actions (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
-  run_id uuid not null references agent_runs(id) on delete cascade,
+  -- null when a person wrote the action at the dashboard instead of the agent
+  -- proposing it as part of a plan.
+  run_id uuid references agent_runs(id) on delete cascade,
+  -- 'agent' = proposed then approved. 'user' = written by a person, which is its
+  -- own approval. Either way it passes the same guard in executor.execute.
+  origin text not null default 'agent' check (origin in ('agent', 'user')),
   integration text not null check (
-    integration in ('slack', 'gmail', 'drive', 'linear', 'github', 'calendar')
+    integration in ('slack', 'gmail', 'drive', 'linear', 'github', 'calendar',
+                    'jira', 'notion', 'asana', 'trello')
   ),
   type text not null,
   description text not null,
@@ -108,7 +121,25 @@ create table if not exists actions (
   created_at timestamptz not null default now()
 );
 
+-- What the agent concluded while nobody was watching. Written when a scheduled run
+-- changes a project's health or fails; `owner_id` is denormalized from the project so
+-- the list is one indexed query rather than a join per project.
+create table if not exists notifications (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  run_id uuid references agent_runs(id) on delete set null,
+  kind text not null check (kind in ('health_changed', 'blockers_found', 'run_failed')),
+  severity text not null default 'info' check (severity in ('info', 'warn', 'danger')),
+  title text not null,
+  body text not null default '',
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists agent_runs_project_idx on agent_runs (project_id, started_at desc);
+create index if not exists notifications_owner_idx on notifications (owner_id, created_at desc);
 create index if not exists evidence_run_idx on evidence (run_id);
 create index if not exists findings_run_idx on findings (run_id);
 create index if not exists actions_run_idx on actions (run_id, status);
+create index if not exists actions_project_idx on actions (project_id, created_at);

@@ -4,6 +4,7 @@ import { Link, Outlet, useLocation } from 'react-router-dom'
 import { Button } from '../ui/Button'
 import { Icon } from '../ui/Icon'
 import { Wordmark } from '../../features/marketing/Wordmark'
+import { NotificationBell } from '../../features/notifications/NotificationBell'
 import type { Project } from '../../features/projects/types'
 import { api, errorMessage } from '../../lib/api'
 import { useAuth } from '../../lib/auth'
@@ -88,6 +89,7 @@ export function AppLayout() {
             </Link>
 
             <div className="ml-auto flex items-center gap-2">
+              <NotificationBell />
               <ThemeToggle />
               <UserMenu />
             </div>

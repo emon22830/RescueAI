@@ -1,8 +1,8 @@
-"""Investigates what was agreed: Google Drive documents and Calendar deadlines."""
+"""Investigates what was agreed: specs in Drive and Notion, deadlines in Calendar."""
 
 from app.agents import supervisor
 from app.agents.state import AgentState
-from app.integrations import calendar, drive
+from app.integrations import calendar, drive, notion
 
 
 def run(state: AgentState) -> dict:
@@ -10,5 +10,9 @@ def run(state: AgentState) -> dict:
         "requirements",
         state["project_id"],
         state["project_name"],
-        {"drive": drive.collect_evidence, "calendar": calendar.collect_evidence},
+        {
+            "drive": drive.collect_evidence,
+            "notion": notion.collect_evidence,
+            "calendar": calendar.collect_evidence,
+        },
     )

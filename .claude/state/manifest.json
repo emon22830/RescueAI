@@ -1,22 +1,28 @@
 {
   "project": "RescueAI",
   "repo": "https://github.com/emon22830/RescueAI",
-  "version": "0.2.0",
-  "phase": "2 of 4 — The loop works for real",
+  "version": "0.5.0",
+  "phase": "3 of 4 \u2014 The loop runs itself, and can actually act",
   "updated": "2026-09-14",
   "claude_setup_version": "1.0.0",
   "stack_locked": true,
   "surfaces": {
-    "backend": { "version": "0.2.0", "status": "analysis flow wired end to end and tested; no live credentials yet" },
-    "frontend": { "version": "0.1.0", "status": "builds, 3 pages wired to the API" }
+    "backend": {
+      "version": "0.5.0",
+      "status": "ten connectors, 31 action types, scheduling and dashboard actions; live database still needs migrations 0002-0004"
+    },
+    "frontend": {
+      "version": "0.4.0",
+      "status": "builds and lints clean; ten apps connectable, action composer, monitoring, notifications"
+    }
   },
   "context_versions": {
     "00-product.md": 1,
-    "01-architecture.md": 1,
+    "01-architecture.md": 2,
     "02-stack.md": 1,
-    "03-schema.md": 1,
-    "04-api-contracts.md": 2
+    "03-schema.md": 4,
+    "04-api-contracts.md": 5
   },
-  "latest_adr": 12,
-  "open_blockers": 2
+  "latest_adr": 22,
+  "open_blockers": 3
 }

@@ -38,6 +38,9 @@ class ProjectResponse(BaseModel):
     name: str
     goal: str
     created_at: datetime
+    # How often the agent re-analyses this project on its own; null means manual only.
+    sync_interval_minutes: int | None = None
+    last_synced_at: datetime | None = None
     summary: ProjectSummary
     # The apps this project can reach right now, so a card can show its connectors
     # without a request per project.
@@ -57,6 +60,20 @@ def list_projects(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
     return service.get_project(project_id, user.id)
+
+
+class SetScheduleRequest(BaseModel):
+    """Minutes between automatic re-analyses, or null to turn the schedule off."""
+
+    sync_interval_minutes: int | None = Field(default=None, ge=service.MIN_SYNC_MINUTES)
+
+
+@router.put("/{project_id}/schedule", response_model=ProjectResponse)
+def set_schedule(
+    project_id: str, body: SetScheduleRequest, user: CurrentUser = Depends(get_current_user)
+) -> dict:
+    """Turn continuous monitoring on or off for this project."""
+    return service.set_schedule(project_id, user.id, body.sync_interval_minutes)
 
 
 @router.delete("/{project_id}", status_code=204)

@@ -19,9 +19,13 @@ from app.agents.state import Source
 from app.auth import CurrentUser, get_current_user
 from app.config import settings
 from app.integrations import google_auth
+from app.integrations.asana import AsanaError
 from app.integrations.github import GitHubError
+from app.integrations.jira import JiraError
 from app.integrations.linear import LinearError
+from app.integrations.notion import NotionError
 from app.integrations.slack import SlackError
+from app.integrations.trello import TrelloError
 from app.projects import service
 
 router = APIRouter(prefix="/projects/{project_id}/integrations", tags=["integrations"])
@@ -38,22 +42,46 @@ GOOGLE_SETUP_URL = "https://console.cloud.google.com/apis/credentials"
 # Every app the agent can investigate, in the order the page lists them. `writes_back`
 # is true only where execute_action() actually does something; the rest are read-only.
 CATALOG: list[dict] = [
-    {"id": "slack", "mode": "token", "writes_back": False, "setup_url": "https://api.slack.com/apps"},
-    {"id": "linear", "mode": "token", "writes_back": True, "setup_url": "https://linear.app/settings/api"},
-    {
-        "id": "github",
-        "mode": "token",
-        "writes_back": False,
-        "setup_url": "https://github.com/settings/personal-access-tokens",
-    },
+    # Listed in the order the workflow reads them — what people said, what was built,
+    # what the plan says, what was agreed — which is the same order SOURCE_ORDER uses
+    # on the frontend, so the Connections page and every app strip agree.
+    {"id": "slack", "mode": "token", "writes_back": True, "setup_url": "https://api.slack.com/apps"},
     # Gmail, Drive and Calendar are three APIs behind one Google consent: connecting any
     # of them connects all three, and they share the project's single 'google' row.
     {"id": "gmail", "mode": "oauth", "writes_back": True, "setup_url": GOOGLE_SETUP_URL},
+    {
+        "id": "github",
+        "mode": "token",
+        "writes_back": True,
+        "setup_url": "https://github.com/settings/personal-access-tokens",
+    },
+    {"id": "linear", "mode": "token", "writes_back": True, "setup_url": "https://linear.app/settings/api"},
+    {
+        "id": "jira",
+        "mode": "token",
+        "writes_back": True,
+        "setup_url": "https://id.atlassian.com/manage-profile/security/api-tokens",
+    },
+    {
+        "id": "asana",
+        "mode": "token",
+        "writes_back": True,
+        "setup_url": "https://app.asana.com/0/my-apps",
+    },
+    {"id": "trello", "mode": "token", "writes_back": True, "setup_url": "https://trello.com/power-ups/admin"},
     {"id": "drive", "mode": "oauth", "writes_back": False, "setup_url": GOOGLE_SETUP_URL},
+    {
+        "id": "notion",
+        "mode": "token",
+        "writes_back": True,
+        "setup_url": "https://www.notion.so/my-integrations",
+    },
     {"id": "calendar", "mode": "oauth", "writes_back": True, "setup_url": GOOGLE_SETUP_URL},
 ]
 
-VERIFY_ERRORS = (SlackError, LinearError, GitHubError)
+VERIFY_ERRORS = (
+    SlackError, LinearError, GitHubError, JiraError, AsanaError, TrelloError, NotionError,
+)
 
 
 class IntegrationStatus(BaseModel):
@@ -69,9 +97,22 @@ class IntegrationStatus(BaseModel):
 
 
 class ConnectIntegrationRequest(BaseModel):
+    """The credential, plus whatever else that one app needs to be reachable.
+
+    Everything but `token` is stored as metadata and read back by the owner, so nothing
+    secret belongs here. Trello's `key` is the exception that proves it: it identifies
+    the application, not the user, and Trello's own docs ship it in client-side code —
+    the token beside it is the secret half, and that is what gets encrypted.
+    """
+
     token: str
     repo: str = ""  # github only
     channel_ids: str = ""  # slack only, optional
+    site: str = ""  # jira only — acme.atlassian.net
+    email: str = ""  # jira only — the account the API token was issued for
+    project_key: str = ""  # jira only, optional — narrows collection to one project
+    key: str = ""  # trello only — the API key that pairs with the token
+    workspace: str = ""  # asana only, optional — defaults to the token's first workspace
 
 
 @router.get("", response_model=list[IntegrationStatus])
@@ -90,7 +131,19 @@ def connect_integration(
     if provider not in service.TOKEN_INTEGRATIONS:
         raise HTTPException(status_code=400, detail=f"{provider} is not connected per project yet")
 
-    extra = {key: value for key, value in {"repo": body.repo, "channel_ids": body.channel_ids}.items() if value}
+    extra = {
+        name: value
+        for name, value in {
+            "repo": body.repo,
+            "channel_ids": body.channel_ids,
+            "site": body.site,
+            "email": body.email,
+            "project_key": body.project_key,
+            "key": body.key,
+            "workspace": body.workspace,
+        }.items()
+        if value
+    }
     try:
         service.connect_integration(project_id, user.id, provider, body.token, extra)
     except VERIFY_ERRORS as error:

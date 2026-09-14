@@ -129,8 +129,48 @@ def permalink(channel_id: str, ts: str) -> str:
 
 
 def execute_action(action: PlannedAction) -> str:
-    """Perform one approved action and return a short human-readable result."""
-    raise NotImplementedError(f"Slack action not implemented: {action.type}")
+    """Perform one approved action and return a short human-readable result.
+
+    `target` is the channel the message belongs in — an id (C0123ABCD) or a name
+    with or without the leading # — and `params.value` is what to say in it.
+    """
+    from app.projects import service
+
+    credential = service.get_integration_credential(action.project_id, "slack")
+    if credential is None:
+        raise RuntimeError("Slack is not connected for this project")
+    token = credential["token"]
+
+    if action.type != "post_message":
+        raise NotImplementedError(f"Slack action not implemented: {action.type}")
+
+    text = action.params.get("value")
+    if not action.target or not text:
+        raise ValueError("Slack post_message needs a target (channel) and params.value (the message)")
+
+    return post_message(action.target, text, token)
+
+
+def post_message(channel: str, text: str, token: str) -> str:
+    """Post one message and return where it landed, with a link to it."""
+    channel_id = resolve_channel(channel, token)
+    body = _post("chat.postMessage", {"channel": channel_id, "text": text}, token)
+    ts = body["ts"]
+    name = body.get("channel", channel_id)
+    return f"Posted to #{name.lstrip('#')} — {permalink(channel_id, ts)}"
+
+
+def resolve_channel(channel: str, token: str) -> str:
+    """A channel id passes straight through; a name is looked up among the channels
+    the bot can see, so a plan may say "#payments" the way a person would."""
+    wanted = channel.strip().lstrip("#")
+    if re.fullmatch(r"[CGD][A-Z0-9]{6,}", wanted):
+        return wanted
+
+    for candidate in list_channels(token):
+        if candidate["name"].lower() == wanted.lower():
+            return candidate["id"]
+    raise SlackError(f"Slack has no channel named #{wanted} that this bot can post to")
 
 
 def _to_evidence(channel: dict, message: dict, authors: dict[str, str]) -> Evidence:
@@ -151,6 +191,21 @@ def _to_evidence(channel: dict, message: dict, authors: dict[str, str]) -> Evide
             "reactions": [reaction["name"] for reaction in message.get("reactions", [])],
         },
     )
+
+
+def _post(method: str, payload: dict, token: str) -> dict:
+    """Write calls take a JSON body; reads take query params. Same ok=false contract."""
+    response = httpx.post(
+        f"{API}/{method}",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    body = response.json()
+    if not body.get("ok"):
+        raise SlackError(f"Slack {method} failed: {body.get('error', 'unknown_error')}")
+    return body
 
 
 def _call(method: str, params: dict, token: str) -> dict:

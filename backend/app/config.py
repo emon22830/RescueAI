@@ -36,6 +36,12 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:5173"
 
+    # The in-process loop that re-analyses projects on their own schedule
+    # (app/scheduler.py). Turn it off on a second instance, or in a worker-less
+    # deployment, so two processes do not both pick up the same due project.
+    scheduler_enabled: bool = True
+    scheduler_tick_seconds: int = 60
+
     @property
     def app_url(self) -> str:
         """Where to send a user once an OAuth round trip is finished — the first

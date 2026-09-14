@@ -14,14 +14,21 @@ Source of truth: `backend/schema.sql`. Run it in the Supabase SQL editor.
 ## Tables
 
 ```
-projects        id · name · goal · created_at
+projects        id · owner_id → auth.users · name · goal · created_at
+                sync_interval_minutes · last_synced_at
+                sync_interval_minutes is null = manual only; the floor is 15
 
-integrations    id · project_id → projects · provider · connected · created_at
+integrations    id · project_id → projects · provider · encrypted_token
+                metadata jsonb · connected_by → auth.users · connected_at · created_at
+                provider ∈ slack | linear | github | google
                 unique (project_id, provider)
 
-agent_runs      id · project_id → projects · status · started_at · completed_at
-                evidence_count · finding_count · error
-                status ∈ running | completed | failed
+agent_runs      id · project_id → projects · status · triggered_by
+                started_at · completed_at · evidence_count · finding_count
+                health · summary · progress · activity jsonb · error
+                status ∈ queued | running | completed | failed
+                triggered_by ∈ analyze | sync | schedule
+                health ∈ on_track | watch | at_risk
 
 evidence        id · project_id · run_id → agent_runs · source · type
                 title · content · url · "timestamp" · metadata jsonb
@@ -30,14 +37,29 @@ findings        id · project_id · run_id → agent_runs · title · severity
                 confidence · description · evidence jsonb
                 severity ∈ low | medium | high | critical
 
-actions         id · project_id · run_id → agent_runs · integration · action
-                description · params jsonb · status · result
-                approved_at · executed_at
-                status ∈ pending | executed | failed
+actions         id · project_id · run_id → agent_runs (nullable) · origin
+                integration · type · description · target · reason
+                params jsonb · status · result · approved_at · executed_at
+                status ∈ pending | approved | executing | completed | failed
+                origin ∈ agent | user
+                run_id is null when a person wrote the action at the dashboard
+
+notifications   id · project_id → projects · owner_id → auth.users
+                run_id → agent_runs · kind · severity · title · body
+                read_at · created_at
+                kind ∈ health_changed | blockers_found | run_failed
+                severity ∈ info | warn | danger
 ```
 
-`source` and `integration` are both constrained to
-`slack | gmail | drive | linear | github | calendar`.
+`source` and `integration` are both constrained to the ten apps:
+`slack | gmail | github | linear | jira | asana | trello | drive | notion | calendar`.
+`integrations.provider` is the seven that store a per-project credential —
+`slack | linear | github | jira | asana | trello | notion` — plus `google`, one row
+covering Gmail, Drive and Calendar.
+
+**Three separate check constraints name every app by hand.** A connector added without
+widening all three fails as a constraint violation deep inside a run, which is not an
+error anybody can read. `migrations/0004_more_connectors.sql` is the worked example.
 
 ## Things that will bite you
 
@@ -49,10 +71,20 @@ actions         id · project_id · run_id → agent_runs · integration · acti
 - **Everything hangs off `run_id`.** Findings and actions are always read for the latest
   completed run — see ADR-0004.
 - Deletes cascade from `projects`.
+- **`notifications.owner_id` is denormalized from the project** so the bell is one
+  indexed query, not a join per project. It cascades from `auth.users` as well.
+- **`integrations.encrypted_token` is Fernet ciphertext**, never a plaintext credential,
+  and is never returned to the frontend once stored.
+- **A `queued` run has no counts and no `completed_at`.** Anything reading a run has to
+  handle that — see [[adr-0015]].
 
 ## Changing the schema
 
-1. Edit `backend/schema.sql`
-2. Apply it in Supabase
-3. Bump `version` in this file's frontmatter and in `manifest.json`
-4. Add an ADR if the change is not additive
+1. Edit `backend/schema.sql` — this is what a *fresh* database is built from
+2. **Add a numbered file in `backend/migrations/`** for a database that already exists.
+   `create table if not exists` does not add a column to a table that is already there,
+   so editing `schema.sql` alone changes nothing for anyone who has already run it.
+   This has bitten the project twice.
+3. Apply the migration in Supabase
+4. Bump `version` in this file's frontmatter and in `manifest.json`
+5. Add an ADR if the change is not additive

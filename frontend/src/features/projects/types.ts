@@ -18,6 +18,10 @@ export interface Project {
   name: string
   goal: string
   created_at: string
+  /** Minutes between automatic re-analyses, or null when monitoring is off. */
+  sync_interval_minutes: number | null
+  /** When the scheduler last ran this project, successfully or not. */
+  last_synced_at: string | null
   /** Always present — the latest completed run's state, or zeroes before the first run. */
   summary: ProjectSummary
   /** The apps this project can reach right now. Comes with the project so a card can
@@ -36,8 +40,9 @@ export interface AgentActivity {
 
 export interface AgentRun {
   id: string
-  status: 'running' | 'completed' | 'failed'
-  triggered_by: 'analyze' | 'sync'
+  /** `queued` means accepted but not started — /analyze returns before the work runs. */
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  triggered_by: 'analyze' | 'sync' | 'schedule'
   started_at: string
   completed_at: string | null
   evidence_count: number | null

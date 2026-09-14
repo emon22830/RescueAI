@@ -29,7 +29,11 @@ def statuses(client: TestClient, project_id: str) -> dict[str, dict]:
 
 
 def test_lists_every_app_the_agent_investigates(client, project_id):
-    assert set(statuses(client, project_id)) == {"slack", "linear", "github", "gmail", "drive", "calendar"}
+    """The Connections page must offer every app the workflow can actually collect
+    from — an app the graph reads but the page never lists is unconnectable."""
+    from app.agents import executor
+
+    assert set(statuses(client, project_id)) == set(executor.INTEGRATIONS)
 
 
 def test_a_token_app_starts_disconnected(client, project_id):
@@ -137,10 +141,15 @@ def test_granting_google_connects_all_three_apps(client, project_id, monkeypatch
     assert apps["gmail"]["metadata"]["email"] == "a@b.com"
 
 
-def test_the_three_write_targets_are_marked_as_such(client, project_id):
+def test_the_write_targets_are_marked_as_such(client, project_id):
+    """`writes_back` is what the UI calls read-only, so it has to agree with the one
+    list that decides what can actually be executed."""
+    from app.agents import executor
+
     writes_back = {app_id for app_id, app in statuses(client, project_id).items() if app["writes_back"]}
 
-    assert writes_back == {"linear", "gmail", "calendar"}
+    assert writes_back == executor.WRITE_TARGETS
+    assert "drive" not in writes_back  # the one app that only ever collects
 
 
 def test_integrations_are_404_for_someone_elses_project(client, project_id):

@@ -20,9 +20,14 @@ def encryption_key(monkeypatch):
     monkeypatch.setattr(settings, "credential_encryption_key", Fernet.generate_key().decode())
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def db(monkeypatch) -> FakeDatabase:
-    """Swap the Supabase client for an in-memory one."""
+    """Swap the Supabase client for an in-memory one.
+
+    Autouse, so no test can reach the real database by forgetting to ask for it — an
+    integration whose `collect_evidence` looks up a stored credential would otherwise
+    quietly query the live Supabase project on every run.
+    """
     fake = FakeDatabase()
     monkeypatch.setattr(service, "get_db", lambda: fake)
     return fake

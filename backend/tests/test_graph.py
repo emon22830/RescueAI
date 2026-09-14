@@ -4,10 +4,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.agents import risk
+from app.agents import executor, risk, supervisor
 from app.agents.graph import analyze
 from app.agents.state import Evidence
-from app.integrations import calendar, drive, github, gmail, linear, slack
+from app.integrations import slack
+
+# Every app the workflow can investigate, from the one place that lists them. Deriving
+# it means adding a connector does not mean editing the assertions in this file.
+ALL_APPS = sorted(executor.INTEGRATIONS)
 
 
 def evidence(source: str, title: str) -> Evidence:
@@ -24,8 +28,7 @@ def evidence(source: str, title: str) -> Evidence:
 @pytest.fixture
 def apps(monkeypatch):
     """Every integration returns one identifiable piece of evidence."""
-    for module in (slack, gmail, github, linear, drive, calendar):
-        source = module.__name__.rsplit(".", 1)[-1]
+    for source, module in executor.INTEGRATIONS.items():
         monkeypatch.setattr(
             module,
             "collect_evidence",
@@ -47,11 +50,11 @@ def test_every_agent_reports_activity():
     result = analyze("test-id", "SaaS Product Launch", "Launch by Oct 1")
 
     agents = {entry.agent for entry in result["agent_activity"]}
-    assert agents == {"supervisor", "communication", "engineering", "requirements", "risk", "recovery"}
+    assert agents == {"supervisor", *supervisor.AGENTS, "risk", "recovery"}
 
 
-def test_evidence_from_all_six_apps_reaches_the_risk_agent(apps, monkeypatch):
-    """The three parallel investigators must append, not overwrite each other."""
+def test_evidence_from_every_app_reaches_the_risk_agent(apps, monkeypatch):
+    """The parallel investigators must append, not overwrite each other."""
     seen: list[Evidence] = []
 
     def fake_ask_for(schema, system, prompt):
@@ -62,10 +65,10 @@ def test_evidence_from_all_six_apps_reaches_the_risk_agent(apps, monkeypatch):
     result = analyze("test-id", "SaaS Product Launch", "Launch by Oct 1")
 
     sources = {item.source for item in result["evidence"]}
-    assert sources == {"slack", "gmail", "github", "linear", "drive", "calendar"}
-    assert len(result["evidence"]) == 6
+    assert sources == set(ALL_APPS)
+    assert len(result["evidence"]) == len(ALL_APPS)
     assert any(line.startswith("[0] ") for line in seen), "risk never saw numbered evidence"
-    assert sum(1 for line in seen if line.startswith("[")) == 6
+    assert sum(1 for line in seen if line.startswith("[")) == len(ALL_APPS)
 
 
 def test_findings_cite_real_evidence_and_set_health(apps, monkeypatch):
@@ -120,7 +123,7 @@ def test_one_broken_app_does_not_lose_the_others(apps, monkeypatch):
 
     result = analyze("test-id", "SaaS Product Launch", "Launch by Oct 1")
 
-    assert len(result["evidence"]) == 5
+    assert len(result["evidence"]) == len(ALL_APPS) - 1
     failures = [entry for entry in result["agent_activity"] if entry.status == "failed"]
     assert len(failures) == 1
     assert "Slack is down" in failures[0].detail

@@ -18,6 +18,7 @@ DEFAULT_TIMESTAMPS = {
     "evidence": "created_at",
     "findings": "created_at",
     "actions": "created_at",
+    "notifications": "created_at",
 }
 
 

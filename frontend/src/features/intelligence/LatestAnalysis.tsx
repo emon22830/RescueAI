@@ -8,6 +8,17 @@ import { duration, timeAgo } from '../../lib/format'
 import type { AgentRun, Project } from '../projects/types'
 import { AgentActivityLog } from './AgentActivityLog'
 
+/** The run's real state, said plainly. A run that has not finished must never read as
+ *  "Completed" — the dashboard is the one place someone checks instead of looking. */
+const STATUS = {
+  queued: { label: 'Queued', tone: 'neutral' },
+  running: { label: 'Investigating…', tone: 'warn' },
+  completed: { label: 'Completed', tone: 'success' },
+  failed: { label: 'Failed', tone: 'danger' },
+} as const
+
+const TRIGGER_LABEL = { analyze: 'Analysis', sync: 'Sync', schedule: 'Scheduled' } as const
+
 /**
  * The most recent pass of the workflow on one project: what it cost and what each node
  * came back with. Which project it describes is named, never implied.
@@ -27,7 +38,7 @@ export function LatestAnalysis({ project, run }: { project: Project | null; run:
   return (
     <Panel
       title="Latest analysis"
-      caption={`${run.triggered_by === 'sync' ? 'Sync' : 'Analysis'} · ${timeAgo(run.started_at)}`}
+      caption={`${TRIGGER_LABEL[run.triggered_by]} · ${timeAgo(run.started_at)}`}
       action={
         <Link
           to={`/app/projects/${project.id}`}
@@ -39,12 +50,15 @@ export function LatestAnalysis({ project, run }: { project: Project | null; run:
       bodyClassName="p-5 space-y-4"
     >
       <div className="flex flex-wrap gap-1.5">
-        <Badge tone={run.status === 'failed' ? 'danger' : 'success'}>
-          {run.status === 'failed' ? 'Failed' : 'Completed'}
-        </Badge>
-        <Badge>{run.evidence_count ?? 0} evidence</Badge>
-        <Badge>{run.finding_count ?? 0} findings</Badge>
-        <Badge>{duration(run.started_at, run.completed_at)}</Badge>
+        <Badge tone={STATUS[run.status].tone}>{STATUS[run.status].label}</Badge>
+        {/* Counts and duration only exist once the run has finished. */}
+        {run.completed_at && (
+          <>
+            <Badge>{run.evidence_count ?? 0} evidence</Badge>
+            <Badge>{run.finding_count ?? 0} findings</Badge>
+            <Badge>{duration(run.started_at, run.completed_at)}</Badge>
+          </>
+        )}
       </div>
 
       {run.error && <p className="text-sm text-danger">{run.error}</p>}

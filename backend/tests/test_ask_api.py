@@ -64,7 +64,7 @@ def analyzed_project(client: TestClient) -> str:
     project_id = client.post(
         "/projects", json={"name": "SaaS Product Launch", "goal": "Launch by Oct 1"}
     ).json()["id"]
-    assert client.post(f"/projects/{project_id}/analyze").status_code == 200
+    assert client.post(f"/projects/{project_id}/analyze").status_code == 202
     return project_id
 
 

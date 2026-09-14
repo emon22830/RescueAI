@@ -9,9 +9,12 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agents import risk
+from app.agents import executor, risk
 from app.agents.state import Evidence
-from app.integrations import calendar, drive, github, gmail, linear, slack
+
+# Every app the workflow investigates, from the one place that lists them — so adding a
+# connector does not mean hand-editing counts in this file.
+APPS = sorted(executor.INTEGRATIONS)
 
 SUMMARY = "Payments is blocked on a vendor sandbox key; PAY-124 has not moved since Sep 2."
 
@@ -19,8 +22,7 @@ SUMMARY = "Payments is blocked on a vendor sandbox key; PAY-124 has not moved si
 @pytest.fixture
 def apps(monkeypatch):
     """Each connected app returns one piece of evidence, as a live workspace would."""
-    for module in (slack, gmail, github, linear, drive, calendar):
-        source = module.__name__.rsplit(".", 1)[-1]
+    for source, module in executor.INTEGRATIONS.items():
         monkeypatch.setattr(
             module,
             "collect_evidence",
@@ -79,14 +81,43 @@ def create_project(client: TestClient) -> str:
     return response.json()["id"]
 
 
+def analyze(client, project_id: str, path: str = "analyze") -> dict:
+    """Start a run and hand back the finished one.
+
+    /analyze only queues the run — the work happens in a background task, which
+    TestClient runs before it returns the response. So the run at the top of the
+    history by the time this returns is the completed one.
+    """
+    response = client.post(f"/projects/{project_id}/{path}")
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    return client.get(f"/projects/{project_id}/runs").json()[0]
+
+
+def test_analyze_is_accepted_and_finishes_in_the_background(client, apps, agent):
+    """The request returns a queued run; the result arrives on that same run."""
+    project_id = create_project(client)
+
+    response = client.post(f"/projects/{project_id}/analyze")
+
+    assert response.status_code == 202
+    queued = response.json()
+    assert queued["status"] == "queued"
+    assert queued["completed_at"] is None
+
+    finished = client.get(f"/projects/{project_id}/runs").json()[0]
+    assert finished["id"] == queued["id"]
+    assert finished["status"] == "completed"
+
+
 def test_analyze_persists_the_run_and_the_project_state(client, apps, agent):
     project_id = create_project(client)
 
-    run = client.post(f"/projects/{project_id}/analyze").json()
+    run = analyze(client, project_id)
 
     assert run["status"] == "completed"
     assert run["triggered_by"] == "analyze"
-    assert run["evidence_count"] == 6
+    assert run["evidence_count"] == len(APPS)
     assert run["finding_count"] == 1
     assert run["health"] == "at_risk"
     assert run["summary"] == SUMMARY
@@ -96,7 +127,7 @@ def test_analyze_persists_the_run_and_the_project_state(client, apps, agent):
 
 def test_analyze_persists_evidence_findings_and_actions(client, db, apps, agent):
     project_id = create_project(client)
-    run = client.post(f"/projects/{project_id}/analyze").json()
+    run = analyze(client, project_id)
 
     for table in ("evidence", "findings", "actions"):
         rows = db.tables[table]
@@ -104,7 +135,7 @@ def test_analyze_persists_evidence_findings_and_actions(client, db, apps, agent)
         assert all(row["run_id"] == run["id"] for row in rows)
         assert all(row["project_id"] == project_id for row in rows)
 
-    assert len(db.tables["evidence"]) == 6
+    assert len(db.tables["evidence"]) == len(APPS)
     assert db.tables["actions"][0]["status"] == "pending"
 
 
@@ -162,7 +193,7 @@ def test_sync_replaces_the_project_state_with_what_is_true_now(client, apps, age
         ),
     )
 
-    run = client.post(f"/projects/{project_id}/sync").json()
+    run = analyze(client, project_id, "sync")
 
     assert run["triggered_by"] == "sync"
     assert run["finding_count"] == 0
@@ -193,23 +224,18 @@ def test_a_run_records_which_app_gave_what(client, apps, agent):
 
     activity = client.get(f"/projects/{project_id}/runs").json()[0]["activity"]
 
+    from app.agents import supervisor
+
     agents = {entry["agent"] for entry in activity}
-    assert agents == {
-        "supervisor",
-        "communication",
-        "engineering",
-        "requirements",
-        "risk",
-        "recovery",
-    }
-    assert sum(entry["evidence_count"] for entry in activity) == 6
+    assert agents == {"supervisor", *supervisor.AGENTS, "risk", "recovery"}
+    assert sum(entry["evidence_count"] for entry in activity) == len(APPS)
 
 
 def test_an_unconnected_workspace_produces_no_findings(client):
     """No credentials means no evidence, and no evidence must never mean invented findings."""
     project_id = create_project(client)
 
-    run = client.post(f"/projects/{project_id}/analyze").json()
+    run = analyze(client, project_id)
 
     assert run["evidence_count"] == 0
     assert run["finding_count"] == 0
@@ -227,10 +253,12 @@ def test_a_failed_run_is_recorded_and_surfaced(client, apps, monkeypatch):
 
     monkeypatch.setattr(risk.llm, "ask_for", boom)
 
+    # The run was accepted, so the failure has to be visible on the run itself —
+    # there is no request left to return 500 to once the work has been handed off.
     response = TestClient(client.app, raise_server_exceptions=False).post(
         f"/projects/{project_id}/analyze"
     )
-    assert response.status_code == 500
+    assert response.status_code == 202
 
     run = client.get(f"/projects/{project_id}/runs").json()[0]
     assert run["status"] == "failed"

@@ -2,25 +2,39 @@
 
     supervisor
         ├── communication  (Slack, Gmail)
-        ├── engineering    (GitHub, Linear)
-        └── requirements   (Drive, Calendar)
+        ├── engineering    (GitHub)
+        ├── delivery       (Linear, Jira, Asana, Trello)
+        └── requirements   (Drive, Notion, Calendar)
                 ↓
               risk  ──►  recovery
 
-The three investigation agents run in parallel and each append to state["evidence"]
-and state["agent_activity"]. Risk waits for all three before it runs.
+The four investigation agents run in parallel and each append to state["evidence"]
+and state["agent_activity"]. Risk waits for all of them before it runs.
+
+`engineering` and `delivery` are deliberately separate: what a team built and what its
+plan says are different questions, and the gap between them is most of what this
+product exists to find.
 """
 
 from functools import lru_cache
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agents import communication, engineering, recovery, requirements, risk, supervisor
+from app.agents import (
+    communication,
+    delivery,
+    engineering,
+    recovery,
+    requirements,
+    risk,
+    supervisor,
+)
 from app.agents.state import AgentState
 
 INVESTIGATORS = {
     "communication": communication.run,
     "engineering": engineering.run,
+    "delivery": delivery.run,
     "requirements": requirements.run,
 }
 

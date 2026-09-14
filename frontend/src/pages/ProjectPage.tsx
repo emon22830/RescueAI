@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { Alert } from '../components/ui/Alert'
@@ -7,18 +7,24 @@ import { EmptyState } from '../components/ui/EmptyState'
 import { Icon } from '../components/ui/Icon'
 import { Skeleton, SkeletonCards } from '../components/ui/Spinner'
 import { ActionCard } from '../features/intelligence/ActionCard'
+import { ActionComposer } from '../features/intelligence/ActionComposer'
 import { AgentActivityLog } from '../features/intelligence/AgentActivityLog'
 import { AskPanel } from '../features/intelligence/AskPanel'
 import { FindingCard } from '../features/intelligence/FindingCard'
 import { RecoveryPlan } from '../features/intelligence/RecoveryPlan'
 import { RunHistory } from '../features/intelligence/RunHistory'
-import type { Action, Finding } from '../features/intelligence/types'
+import type { Action, ActionType, Finding } from '../features/intelligence/types'
+import { MonitoringCard } from '../features/projects/MonitoringCard'
 import { ProjectHeader } from '../features/projects/ProjectHeader'
 import { ProjectState } from '../features/projects/ProjectState'
 import type { AgentRun, Project } from '../features/projects/types'
 import { api, errorMessage } from '../lib/api'
 import { useAppData } from '../lib/appData'
 import { plural } from '../lib/format'
+
+/** How often to re-read a run that is still going. Fast enough to feel live, slow
+ *  enough that a five-minute investigation is not a thousand requests. */
+const POLL_MS = 3000
 
 export function ProjectPage() {
   const { projectId = '' } = useParams()
@@ -29,6 +35,11 @@ export function ProjectPage() {
   const [findings, setFindings] = useState<Finding[]>([])
   const [actions, setActions] = useState<Action[]>([])
   const [runs, setRuns] = useState<AgentRun[]>([])
+  // What this project can be asked to do. Loaded once — it only changes when an app is
+  // connected or disconnected, which happens on a different page.
+  const [actionTypes, setActionTypes] = useState<ActionType[]>([])
+  const [typesLoading, setTypesLoading] = useState(true)
+  const [typesError, setTypesError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -58,6 +69,33 @@ export function ProjectPage() {
       .finally(() => setLoading(false))
   }, [load])
 
+  useEffect(() => {
+    api
+      .getActionTypes(projectId)
+      .then(setActionTypes)
+      .catch((caught) => setTypesError(errorMessage(caught)))
+      .finally(() => setTypesLoading(false))
+  }, [projectId])
+
+  // /analyze returns as soon as the run is queued — the investigation itself happens
+  // on the server. So the page follows the run rather than the request: it re-reads
+  // until the latest run leaves 'queued' and 'running', then stops.
+  const latestRun = runs[0] ?? null
+  const investigating = latestRun?.status === 'queued' || latestRun?.status === 'running'
+
+  useEffect(() => {
+    if (!investigating) return
+    const timer = setInterval(() => void load().catch(() => {}), POLL_MS)
+    return () => clearInterval(timer)
+  }, [investigating, load])
+
+  // When a run finishes, the sidebar's health dot for this project is out of date.
+  const wasInvestigating = useRef(false)
+  useEffect(() => {
+    if (wasInvestigating.current && !investigating) void reloadSidebar()
+    wasInvestigating.current = investigating
+  }, [investigating, reloadSidebar])
+
   async function run(task: () => Promise<unknown>) {
     setBusy(true)
     setError(null)
@@ -76,6 +114,15 @@ export function ProjectPage() {
     setSelected((current) =>
       current.includes(id) ? current.filter((other) => other !== id) : [...current, id],
     )
+  }
+
+  async function changeSchedule(minutes: number | null) {
+    setError(null)
+    try {
+      setProject(await api.setSchedule(projectId, minutes))
+    } catch (caught) {
+      setError(errorMessage(caught))
+    }
   }
 
   function approve() {
@@ -110,7 +157,6 @@ export function ProjectPage() {
     return <Alert title="Project unavailable">{error ?? 'No project was returned.'}</Alert>
   }
 
-  const latestRun = runs[0] ?? null
   const pending = actions.filter((action) => action.status === 'pending')
   const executed = actions.filter((action) => action.status !== 'pending')
   const analyzed = runs.some((item) => item.status === 'completed')
@@ -120,7 +166,7 @@ export function ProjectPage() {
       <ProjectHeader
         project={project}
         analyzed={analyzed}
-        busy={busy}
+        busy={busy || investigating}
         onSync={() => run(() => api.syncProject(projectId))}
         deleting={deleting}
         onDelete={() => void deleteProject()}
@@ -186,7 +232,7 @@ export function ProjectPage() {
               <div className="space-y-3 pt-2">
                 <SectionHeading
                   title="Execution results"
-                  caption="What each approved step did in the connected app"
+                  caption="What each action did in the connected app — the agent's and your own"
                 />
                 {executed.map((action) => (
                   <ActionCard key={action.id} action={action} status={action.status} />
@@ -197,6 +243,16 @@ export function ProjectPage() {
         </div>
 
         <div className="space-y-4">
+          <ActionComposer
+            projectId={projectId}
+            types={actionTypes}
+            loading={typesLoading}
+            error={typesError}
+            onDone={load}
+          />
+
+          <MonitoringCard project={project} onChange={changeSchedule} />
+
           <Panel
             title="Agent activity"
             caption={latestRun ? 'From the latest run' : undefined}

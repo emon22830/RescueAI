@@ -3,11 +3,14 @@ import { Link } from 'react-router-dom'
 import { Button } from '../../components/ui/Button'
 import { Icon } from '../../components/ui/Icon'
 import { SOURCE_LABELS, SourceIcon } from '../../components/ui/SourceIcon'
+import { SOURCE_ORDER } from '../integrations/providers'
 import type { Source } from '../intelligence/types'
 import { useAuth } from '../../lib/auth'
 import { DashboardPreview } from './DashboardPreview'
 
-const APPS: Source[] = ['slack', 'gmail', 'drive', 'linear', 'github', 'calendar']
+// One list, from the same order every other surface uses — a marketing page that
+// claims an app the product does not have is the worst kind of drift.
+const APPS: Source[] = SOURCE_ORDER
 
 export function Hero() {
   const { session } = useAuth()
@@ -27,7 +30,7 @@ export function Hero() {
                 </span>
               ))}
             </span>
-            Six apps, one honest project state
+            Ten apps, one honest project state
           </span>
 
           <h1 className="mt-6 text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-6xl">

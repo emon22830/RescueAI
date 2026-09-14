@@ -16,7 +16,7 @@ const FAQS = [
   },
   {
     q: 'Where do my credentials live?',
-    a: 'Slack, Linear and GitHub tokens are verified against the real API, then stored encrypted against that one project. Google apps currently use one OAuth client configured on the server.',
+    a: 'Slack, Linear, Jira, Asana, Trello, GitHub and Notion tokens are verified against the real API, then stored encrypted against that one project. Google apps currently use one OAuth client configured on the server.',
   },
   {
     q: 'How does it know which project a message is about?',

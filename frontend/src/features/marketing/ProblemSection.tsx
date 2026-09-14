@@ -13,7 +13,7 @@ export function ProblemSection() {
     <Section className="border-y border-line bg-surface">
       <div className="mx-auto max-w-2xl text-center">
         <h2 className="text-2xl font-extrabold leading-tight tracking-tight sm:text-[2rem]">
-          Nobody is lying. Nobody is looking at all six places at once.
+          Nobody is lying. Nobody is looking at every place at once.
         </h2>
         <p className="mt-4 text-base leading-relaxed text-muted">
           A project&apos;s real state is never in one tool. Each app is telling the truth about

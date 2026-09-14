@@ -67,6 +67,7 @@ def find_projects(project_name: str, token: str) -> list[dict]:
           nodes {
             id name description url state progress startDate targetDate
             lead { name email }
+            teams(first: 5) { nodes { id key } }
           }
         }
       }
@@ -144,6 +145,98 @@ def comment_on_issue(identifier: str, body: str, token: str) -> str:
     return f"Commented on {identifier} — {result['comment']['url']}"
 
 
+def create_issue(
+    title: str,
+    description: str,
+    token: str,
+    team: str = "",
+    project_name: str = "",
+    assignee: str = "",
+    due_date: str = "",
+) -> str:
+    """Open a new issue and return its identifier and URL.
+
+    Linear will not create an issue without a team, and there is rarely an obvious
+    one — so `resolve_team` is explicit about how it chose, and says what to type
+    instead when it cannot.
+    """
+    chosen = resolve_team(team, project_name, token)
+    fields: dict = {"teamId": chosen["id"], "title": title, "description": description}
+
+    if assignee:
+        user = find_user(assignee, token)
+        if user is None:
+            raise LinearError(f"No active Linear user matching '{assignee}'")
+        fields["assigneeId"] = user["id"]
+    if due_date:
+        fields["dueDate"] = due_date
+
+    mutation = """
+      mutation($input: IssueCreateInput!) {
+        issueCreate(input: $input) { success issue { identifier url title } }
+      }
+    """
+    result = graphql(mutation, {"input": fields}, token)["issueCreate"]
+    if not result["success"]:
+        raise LinearError(f"Linear rejected the new issue: {title}")
+
+    issue = result["issue"]
+    return f"Created {issue['identifier']} in {chosen['key']} — {issue['url']}"
+
+
+def close_issue(identifier: str, state_name: str, token: str) -> str:
+    """Close an issue. Without a state name, the team's own completed state is used —
+    every workspace names it something different ("Done", "Shipped", "Closed")."""
+    if state_name:
+        return update_issue_state(identifier, state_name, token)
+
+    issue = fetch_issue(identifier, token)
+    states = issue["team"]["states"]["nodes"]
+    done = next((state for state in states if state["type"] == "completed"), None)
+    if done is None:
+        available = ", ".join(state["name"] for state in states)
+        raise LinearError(
+            f"{identifier}: this team has no completed state. Name one instead: {available}"
+        )
+
+    updated = _update(issue["id"], {"stateId": done["id"]}, token)
+    return f"{identifier} closed as {updated['state']['name']} — {updated['url']}"
+
+
+def resolve_team(team: str, project_name: str, token: str) -> dict:
+    """Which team a new issue belongs to: the one named, else the one behind the Linear
+    project of the same name, else the only team there is. Never a guess between two."""
+    teams = graphql("query { teams(first: 100) { nodes { id key name } } }", {}, token)
+    teams = teams["teams"]["nodes"]
+    if not teams:
+        raise LinearError("This Linear workspace has no teams")
+
+    if team:
+        wanted = team.strip().lower()
+        match = next(
+            (t for t in teams if t["key"].lower() == wanted or t["name"].lower() == wanted), None
+        )
+        if match is None:
+            keys = ", ".join(t["key"] for t in teams)
+            raise LinearError(f"No Linear team '{team}'. Teams in this workspace: {keys}")
+        return match
+
+    if project_name:
+        for project in find_projects(project_name, token):
+            for candidate in project.get("teams", {}).get("nodes", []):
+                match = next((t for t in teams if t["id"] == candidate["id"]), None)
+                if match:
+                    return match
+
+    if len(teams) == 1:
+        return teams[0]
+
+    keys = ", ".join(t["key"] for t in teams)
+    raise LinearError(
+        f"This workspace has several teams, so the issue needs one. Set params.team to one of: {keys}"
+    )
+
+
 def fetch_issue(identifier: str, token: str) -> dict:
     """One issue by its identifier ("PAY-124"), with its team's workflow states."""
     query = """
@@ -184,10 +277,10 @@ def find_user(person: str, token: str) -> dict | None:
 def execute_action(action: PlannedAction) -> str:
     """Perform one approved action and return a short human-readable result.
 
-    `target` is the issue identifier. A plan that carries structured params
-    (`state`, `assignee`, `due_date`) applies them directly; a plan that only
-    describes the change in `value` has that text posted as a comment on the
-    issue rather than guessed at.
+    For everything but `create_issue`, `target` is the issue identifier. A plan that
+    carries structured params (`state`, `assignee`, `due_date`) applies them directly;
+    a plan that only describes the change in `value` has that text posted as a comment
+    on the issue rather than guessed at.
     """
     from app.projects import service
 
@@ -196,6 +289,19 @@ def execute_action(action: PlannedAction) -> str:
         raise RuntimeError("Linear is not connected for this project")
     token = credential["token"]
 
+    if action.type == "create_issue":
+        if not action.target:
+            raise ValueError("Linear create_issue needs a target (the issue title)")
+        return create_issue(
+            title=action.target,
+            description=action.params.get("value") or action.description,
+            token=token,
+            team=action.params.get("team", ""),
+            project_name=action.params.get("project", ""),
+            assignee=action.params.get("assignee", ""),
+            due_date=action.params.get("due_date", ""),
+        )
+
     if not action.target:
         raise ValueError(f"Linear {action.type} needs a target (the issue identifier)")
 
@@ -203,6 +309,11 @@ def execute_action(action: PlannedAction) -> str:
         return assign_issue(action.target, _required(action, "value"), token)
     if action.type == "update_due_date":
         return update_due_date(action.target, _required(action, "value"), token)
+    if action.type == "comment_issue":
+        return comment_on_issue(action.target, _required(action, "value"), token)
+    if action.type == "close_issue":
+        # The closing state is optional — empty means "the team's own done state".
+        return close_issue(action.target, action.params.get("value", "").strip(), token)
     if action.type == "update_issue":
         return _apply_issue_update(action, action.target, token)
 

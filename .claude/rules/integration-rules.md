@@ -15,8 +15,9 @@ credential to write with — every project can connect a different token.
 This is a multi-tenant SaaS: every project connects its own tools, so where a
 credential lives depends on which kind of app it is.
 
-- **Token apps — Slack, Linear, GitHub.** A user pastes a credential into the
-  project's Connections page. It is never stored globally. Add a third function:
+- **Token apps — Slack, Linear, GitHub, Jira, Asana, Trello, Notion.** A user pastes a
+  credential into the project's Connections page. It is never stored globally. Add a
+  third function:
   ```python
   def verify_token(token: str, **extra) -> dict: ...
   ```
@@ -57,9 +58,19 @@ credential lives depends on which kind of app it is.
 - OAuth apps (Google): from `app.config.settings` only. A missing one must fail with
   `settings.require(...)`, so the user sees 503 with the variable name instead of a
   stack trace.
-- Token apps (Slack, Linear, GitHub): from `service.get_integration_credential`, never
-  from `settings`. A missing one is not an error — `collect_evidence` returns `[]` like
-  any other unconnected app.
+- Token apps (the seven above): from `service.get_integration_credential`, never from
+  `settings`. A missing one is not an error — `collect_evidence` returns `[]` like any
+  other unconnected app.
+- **Anything passed as `extra` is stored as metadata and read back to the owner**, so
+  no second secret goes there. A site, a repo, a workspace id, a project key are all
+  fine. Trello's `key` is the edge case: it identifies the application rather than the
+  user, and Trello's own docs ship it client-side — the token beside it is the secret
+  half, and that is the one that gets encrypted.
 
 ## Adding one
-Use `.claude/skills/new-integration/SKILL.md`.
+
+The file is the easy part; a connector also has to be wired into the `Source` literal,
+an investigator node, the executor's catalog, the service's token list, the API catalog,
+three SQL check constraints and four frontend maps. Use
+`.claude/skills/new-integration/SKILL.md`, which lists all of them and names the tests
+that fail when one is missed.

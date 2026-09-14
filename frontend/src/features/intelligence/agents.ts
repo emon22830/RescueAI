@@ -7,8 +7,17 @@ import type { Source } from './types'
 export const AGENTS: Record<string, { label: string; reads: Source[]; does: string }> = {
   supervisor: { label: 'Supervisor', reads: [], does: 'Planned the investigation' },
   communication: { label: 'Communication', reads: ['slack', 'gmail'], does: 'What the team is saying' },
-  engineering: { label: 'Engineering', reads: ['github', 'linear'], does: 'What has actually been built' },
-  requirements: { label: 'Requirements', reads: ['drive', 'calendar'], does: 'What was agreed, and when' },
+  engineering: { label: 'Engineering', reads: ['github'], does: 'What has actually been built' },
+  delivery: {
+    label: 'Delivery',
+    reads: ['linear', 'jira', 'asana', 'trello'],
+    does: 'What the plan says, and what is overdue',
+  },
+  requirements: {
+    label: 'Requirements',
+    reads: ['drive', 'notion', 'calendar'],
+    does: 'What was agreed, and when',
+  },
   risk: { label: 'Risk', reads: [], does: 'Cross-referenced everything into findings' },
   recovery: { label: 'Recovery', reads: [], does: 'Turned the findings into a plan' },
 }
