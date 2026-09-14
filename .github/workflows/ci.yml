@@ -101,21 +101,30 @@ jobs:
     needs: [backend, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+
+    # `secrets` is not one of the contexts an `if` can read, so testing it there is not
+    # a condition that comes out false — it fails the whole file to parse, before any
+    # job starts. Mapping the secrets to env first is what makes them testable, and it
+    # keeps the values off the command line in the steps below as well.
+    env:
+      RENDER_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      VERCEL_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+
     steps:
       # Both of these are no-ops until the matching secret exists, so adding this job
       # changes nothing on its own. Turning it into a real gate is two steps, and they
       # belong together: add the hook, then switch that service off auto-deploy. Doing
       # only the first means every push deploys twice. See DEPLOYMENT.md.
       - name: Render
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
-        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" > /dev/null && echo "Render deploy triggered."
+        if: env.RENDER_HOOK != ''
+        run: curl -fsS -X POST "$RENDER_HOOK" > /dev/null && echo "Render deploy triggered."
 
       - name: Vercel
-        if: ${{ secrets.VERCEL_DEPLOY_HOOK_URL != '' }}
-        run: curl -fsS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK_URL }}" > /dev/null && echo "Vercel deploy triggered."
+        if: env.VERCEL_HOOK != ''
+        run: curl -fsS -X POST "$VERCEL_HOOK" > /dev/null && echo "Vercel deploy triggered."
 
       - name: Nothing to do
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL == '' && secrets.VERCEL_DEPLOY_HOOK_URL == '' }}
+        if: env.RENDER_HOOK == '' && env.VERCEL_HOOK == ''
         run: |
           echo "No deploy hooks configured — Render and Vercel are still deploying on their"
           echo "own when main moves, which means these checks did not gate that deploy."
