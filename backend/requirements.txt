@@ -1,10 +1,25 @@
-fastapi
-uvicorn[standard]
-pydantic
-pydantic-settings
-langgraph
-google-genai
-supabase
-cryptography
-pytest
-httpx
+# Pinned on purpose. Unpinned, CI and Render each resolve these independently and a
+# breaking major release deploys itself with no commit from anyone — the tests can pass
+# against one set of versions while production serves another. These are the versions
+# the suite passes against.
+#
+# To upgrade: change a pin, run the tests, commit the change. Never let it drift.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# The agent workflow.
+langgraph==1.2.11
+
+# The only LLM SDK in the project — see app/ai/llm.py.
+google-genai==2.23.0
+
+# Database, and the Fernet that encrypts every stored integration token.
+supabase==2.31.0
+cryptography==50.0.1
+
+# Tests, and the client they drive the app through.
+pytest==9.1.1
+httpx==0.28.1
