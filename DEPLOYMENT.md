@@ -114,7 +114,19 @@ healthy-looking bundle about a third the normal size (262 kB instead of 581 kB),
 what deploys is a white screen. `vite.config.ts` now refuses to build without those two
 variables; the bundle check in CI is the second line of defence.
 
-**As it stands, CI does not gate anything.** Render and Vercel each redeploy on their
+`main` is protected: **Backend tests** and **Frontend build** are required checks, the
+branch must be up to date before merging, and force-pushes and deletion are refused.
+Administrators are exempt, which is deliberate for a single maintainer — it keeps a
+direct push available when one is needed. Turn that exemption off (`enforce_admins`) the
+moment a second person has write access, because until then the required checks gate
+pull requests only.
+
+Dependabot (`.github/dependabot.yml`) opens weekly grouped updates for pip, npm and the
+actions themselves. Pinned dependencies do not move on their own — that is the point of
+pinning — so this is what keeps a security release from waiting a year for someone to
+notice it.
+
+**Neither of those makes CI gate the deploy.** Render and Vercel each redeploy on their
 own when `main` moves, in parallel with these checks, so a red build still ships. Making
 the gate real is two changes per service, and both halves matter — adding the hook
 without turning off auto-deploy just deploys everything twice:
