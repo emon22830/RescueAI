@@ -1,0 +1,122 @@
+# What runs before anything reaches production.
+#
+# Render and Vercel both deploy on their own when main moves, so this pipeline's job is
+# not to push code out — it is to say whether the commit that is about to go out works.
+# To make that gate real rather than advisory, see DEPLOYMENT.md § Gating the deploy.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A second push supersedes the first; nothing is learned from finishing a run for a
+# commit that is already history.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      # No secrets on purpose. conftest.py swaps Supabase for tests/fake_db.py, so the
+      # suite must pass with no backend/.env at all — if it ever needs one, that is a
+      # test reaching the real network and the failure here is the point.
+      - name: Test
+        working-directory: backend
+        run: python -m pytest tests -q
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Test
+        working-directory: frontend
+        run: npm test
+
+      # Placeholders, not secrets. Vite inlines these at build time, so the build needs
+      # *a* value to type-check and bundle against — but the values that ship are the
+      # ones set in the Vercel dashboard, and the anon key is public anyway. What this
+      # step proves is that the code compiles and bundles, not that it can reach a
+      # real Supabase project.
+      - name: Build
+        working-directory: frontend
+        env:
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
+        run: npm run build
+
+      # A green build is not proof the app is in it. When the Supabase variables are
+      # missing, supabaseClient.ts becomes a provably-unconditional throw, every module
+      # downstream of it is dead code, and the build happily emits a bundle with the
+      # whole app tree-shaken out. vite.config.ts now refuses that build — this checks
+      # the artifact itself, so any future path to an empty bundle is caught too.
+      - name: The bundle actually contains the app
+        working-directory: frontend
+        run: |
+          bundle=$(ls dist/assets/*.js | head -1)
+          echo "Checking $bundle ($(wc -c < "$bundle") bytes)"
+          for marker in createClient refreshSession RescueAI; do
+            if ! grep -q "$marker" "$bundle"; then
+              echo "::error::'$marker' is missing from the bundle — the app was tree-shaken away."
+              exit 1
+            fi
+          done
+          echo "App code present."
+
+  deploy:
+    name: Deploy to production
+    needs: [backend, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # Both of these are no-ops until the matching secret exists, so adding this job
+      # changes nothing on its own. Turning it into a real gate is two steps, and they
+      # belong together: add the hook, then switch that service off auto-deploy. Doing
+      # only the first means every push deploys twice. See DEPLOYMENT.md.
+      - name: Render
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" > /dev/null && echo "Render deploy triggered."
+
+      - name: Vercel
+        if: ${{ secrets.VERCEL_DEPLOY_HOOK_URL != '' }}
+        run: curl -fsS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK_URL }}" > /dev/null && echo "Vercel deploy triggered."
+
+      - name: Nothing to do
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL == '' && secrets.VERCEL_DEPLOY_HOOK_URL == '' }}
+        run: |
+          echo "No deploy hooks configured — Render and Vercel are still deploying on their"
+          echo "own when main moves, which means these checks did not gate that deploy."
+          echo "DEPLOYMENT.md § Gating the deploy explains how to make them."
