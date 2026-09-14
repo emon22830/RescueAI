@@ -529,3 +529,144 @@ database whether it asks for one or not; the ones that need to inspect it still 
 **Consequence.** The suite is hermetic and runs in 0.4s. More importantly, a test can no
 longer read or write the real project's data by forgetting a fixture — which was a real
 risk the moment an integration test touched a write path.
+
+---
+
+## ADR-0023 — One Supabase client per thread, not one per process
+**2026-09-14 · active**
+
+**Context.** `get_db()` was `@lru_cache`, so the whole process shared one client. FastAPI
+runs every `def` endpoint in a worker thread, and the project page opens seven requests
+at once — so seven threads drove one `httpx` client. Supabase speaks HTTP/2, so those
+requests were multiplexed over a single TCP connection whose read loop is not safe to
+drive concurrently. Whichever request lost raised `httpx.ReadError`, nothing handled it,
+and a page whose data was perfectly fine rendered as "Project unavailable".
+
+This is the cause behind the 500s that were chased for most of a day. Two earlier
+theories — a CORS misconfiguration, then a `CREDENTIAL_ENCRYPTION_KEY` mismatch — were
+both wrong, and both looked plausible because the failure never reached the browser as a
+500 (see [[adr-0024]]).
+
+**Decision.** `get_db()` keeps the client in `threading.local()`. One client per worker
+thread, created on first use.
+
+**Consequence.** A handful of extra connections instead of one, in exchange for removing
+the sharing entirely. `lru_cache` must not come back here — it reads as a harmless
+memoisation and is the bug. An `HTTPError` handler in `main.py` now names a dropped
+connection if one ever happens, rather than letting it read as a crash.
+
+---
+
+## ADR-0024 — An unhandled error is answered inside the CORS layer
+**2026-09-14 · active**
+
+**Context.** Starlette builds its stack as `ServerErrorMiddleware` → user middleware →
+`ExceptionMiddleware`. An exception no handler claims is turned into a 500 by the
+outermost middleware — outside `CORSMiddleware` — so the response carries no
+`access-control-allow-origin`. The browser refuses to surface it and `fetch` rejects,
+which is indistinguishable from the backend being down. A backend that crashed on one
+endpoint therefore read in the UI as a backend that was unreachable, and sent two
+separate investigations after the wrong cause.
+
+Registering `@app.exception_handler(Exception)` does **not** fix this: that handler is
+installed on `ServerErrorMiddleware`, still outside CORS. Verified both ways.
+
+**Decision.** A `@app.middleware("http")` catch-all registered *before* the CORS
+middleware, so CORS ends up outside it and can stamp its headers on what we return. It
+logs the traceback and answers a real `{"detail": ...}`.
+
+**Consequence.** Order of registration in `main.py` is load-bearing: the last middleware
+added is the outermost, so CORS must be added *after* the catch-all. A regression test
+asserts a 500 still carries `access-control-allow-origin`, and it was checked to fail
+when the middleware is removed.
+
+---
+
+## ADR-0025 — A production build fails when its client variables are missing
+**2026-09-14 · active**
+
+**Context.** `supabaseClient.ts` throws at module top level when `VITE_SUPABASE_URL` or
+`VITE_SUPABASE_ANON_KEY` is missing. A production build replaces `import.meta.env.VITE_*`
+with `undefined` *before* minifying, so that throw becomes provably unconditional and
+every module downstream of it is dead code — which is the entire app. The build exits 0
+and emits a plausible bundle about a third the normal size (262 kB against 581 kB). What
+deploys is a white screen, and nothing in the output reads as a failure.
+
+Found by building a clean clone: same 132 modules transformed, half the output, not one
+app string in the bundle.
+
+**Decision.** `vite.config.ts` refuses to build when either variable is unset. Build
+only — `vite dev` still runs on a half-filled `.env`. CI additionally greps the emitted
+bundle for `createClient`, `refreshSession` and `RescueAI`.
+
+**Consequence.** A misconfigured Vercel project now fails its build loudly instead of
+deploying an empty app. The bundle check is deliberate redundancy: the guard covers the
+known path to an empty bundle, the grep covers any other.
+
+---
+
+## ADR-0026 — Dependencies are pinned, and Dependabot proposes the moves
+**2026-09-14 · active**
+
+**Context.** `backend/requirements.txt` named ten packages and pinned none. CI and Render
+each resolved the tree independently, so a breaking major release could deploy itself
+with no commit from anyone, and a passing suite proved nothing about the versions
+production would run.
+
+**Decision.** Exact pins on the direct dependencies, verified by building a fresh venv
+from the file alone and running the suite against it. Transitives still float — a full
+lock would be more reproducible and more machinery than this project wants.
+
+**Consequence.** Nothing updates on its own any more, including a security release. That
+is the point of pinning and it is also how a project silently falls a year behind, so
+`.github/dependabot.yml` opens weekly grouped pull requests for pip, npm and the actions
+themselves; CI runs the suite against each, and the green check is the evidence for
+merging. Upgrading is now: change a pin, run the tests, commit.
+
+---
+
+## ADR-0027 — CI gates pull requests; the deploy is still ungated
+**2026-09-14 · active**
+
+**Context.** Render and Vercel both redeploy on their own when `main` moves. Adding CI
+does not change that — the checks run *in parallel* with the deploy, so a red build
+still ships. Making the checks a real gate means turning auto-deploy off on each service
+and triggering it from the workflow instead; doing only half of that deploys everything
+twice.
+
+Required status checks can only pass *after* a commit exists, so enforcing them on
+direct pushes makes direct pushes impossible — it forces a pull request for every
+change. For a single maintainer mid-build that is a real tax for little gain.
+
+**Decision.** `main` is protected with **Backend tests** and **Frontend build** as
+required checks, must-be-up-to-date on, force-push and deletion refused, and
+`enforce_admins` **false**. The workflow's `deploy` job is inert until
+`RENDER_DEPLOY_HOOK_URL` or `VERCEL_DEPLOY_HOOK_URL` exists.
+
+**Consequence.** Be honest about what this buys: the checks gate pull requests, not the
+maintainer's own pushes, and the deploy is not gated at all. Force-push and deletion
+protection are absolute. Turn `enforce_admins` on the moment a second person has write
+access, and add the hooks when the deploy should wait for green.
+
+One thing it already earned: `secrets` is not a context an `if` expression can read at
+any level, so `if: ${{ secrets.X != '' }}` does not evaluate false — it fails the whole
+workflow to parse. The first run caught that in zero seconds. Map secrets to `env` on
+the job and test `env.X`.
+
+---
+
+## ADR-0028 — A verified token is remembered for a minute
+**2026-09-14 · active**
+
+**Context.** `get_current_user` verifies every bearer token with a network round trip to
+Supabase Auth. One screen opens seven requests, so seven hops happened before any of
+them looked at a project.
+
+**Decision.** A successful verification is held in-process for 60 seconds, keyed by the
+token, under a lock, with expired entries swept on write.
+
+**Consequence.** A Supabase access token is a JWT already valid for an hour on its own
+terms, so remembering a good one for a minute extends nobody's access — it only stops us
+asking the same question seven times a second. **Only successes are cached**: a rejection
+is re-asked every time, so a session that has just been renewed is never told it is still
+invalid. The cache is per-process, so a second instance verifies independently.

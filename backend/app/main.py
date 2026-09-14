@@ -32,7 +32,7 @@ async def lifespan(_app: FastAPI):
     await scheduler.stop()
 
 
-app = FastAPI(title="RescueAI", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="RescueAI", version="0.6.1", lifespan=lifespan)
 
 
 @app.middleware("http")

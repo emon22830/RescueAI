@@ -2,36 +2,7 @@
 
 Resolved items move to CHANGELOG.md. Never delete one silently.
 
-## 1 — Migrations 0002, 0003 and 0004 have not been run against the live database
-
-Continuous monitoring and notifications are written, tested and shipped in code, but the
-live Supabase project is still on the pre-scheduling schema. Verified this session:
-`projects` has no `sync_interval_minutes` or `last_synced_at`, and `notifications` does
-not exist (`PGRST205`).
-
-**Symptoms until it is run:** `PUT /projects/{id}/schedule` answers **502**, the bell
-stays empty, and the scheduler ticks but finds nothing due — `_is_due` reads a column
-that is not there, gets `None`, and correctly decides nothing is scheduled.
-
-`0003_actions_from_the_dashboard.sql` is outstanding too: `actions.run_id` is still
-`not null` and there is no `origin` column, so `POST /projects/{id}/actions` — taking an
-action from the dashboard — answers **502** until it is run.
-
-`0004_more_connectors.sql` is outstanding too. Three check constraints name every app by
-hand — `evidence.source`, `actions.integration` and `integrations.provider` — so until it
-runs, connecting Jira, Notion, Asana or Trello fails, and any evidence collected from
-them violates a constraint mid-run.
-
-**Unblocks when:** `0002`, `0003` and `0004` in `backend/migrations/` have all been run
-in the Supabase SQL editor, in that order. All three are safe on an existing database —
-every statement is `if not exists`, a constraint swap, or a `drop not null`.
-
-**Why analysis still works meanwhile:** `_touch_synced` and `_notify` both swallow and
-log their own failures on purpose, so a database missing those columns cannot strand a
-run as `running` forever. That is deliberate, and it is the reason the system stayed
-runnable through this change — not an accident to be tidied away.
-
-## 2 — No demo data in the real apps
+## 1 — No demo data in the real apps
 
 The agent is only as good as what it can find. The "SaaS Product Launch" scenario —
 the Slack thread about the blocked payment API, the requirements-change email, spec v3
@@ -44,7 +15,7 @@ not connected anywhere, which is most of why nothing has been found yet.
 
 **Never solve this by hardcoding data in source.** See [[adr-0002]].
 
-## 3 — No write action has touched a live workspace
+## 2 — No write action has touched a live workspace
 
 Nine integrations can now execute, across 31 action types. Every one is pinned by a test
 down to the JSON body that goes over the wire, and the shapes come from the current API
@@ -60,8 +31,49 @@ The two riskiest both have to resolve something they were not given:
   team there is. In a multi-team workspace with no match it refuses and lists the team
   keys rather than guessing — worth seeing that error once before a demo.
 
+## 3 — The deploy is not gated by CI
+
+CI runs on every push, but Render and Vercel redeploy on their own the moment `main`
+moves — *in parallel* with the checks, not after them. A commit whose tests fail still
+reaches production; the red check appears next to it a minute later.
+
+**Unblocks when:** for each service, a deploy hook is saved as a repository secret
+(`RENDER_DEPLOY_HOOK_URL`, `VERCEL_DEPLOY_HOOK_URL`) **and** auto-deploy is turned off on
+that service. Both halves, together — adding only the hook deploys everything twice. The
+`deploy` job in `ci.yml` already reads both and skips whichever is absent.
+
+Related: `enforce_admins` is false on the branch protection, so the required checks gate
+pull requests but not a maintainer's own push ([[adr-0027]]). Turn it on when a second
+person has write access.
+
+## 4 — A failure in production is only visible in Render's logs
+
+There is no error tracking. When something throws, the catch-all middleware logs a
+traceback where nobody is watching and the user sees a generic message. Every diagnosis
+this session needed either a reproduction or a log read; neither scales past one
+developer.
+
+`/health` is a liveness check being read as a readiness check — it answers `ok` when
+Supabase is unreachable, so a service that cannot serve anything looks healthy.
+
 ## Traps worth knowing
 
+- **`get_db()` must never be `@lru_cache`d again** ([[adr-0023]]). One shared client is
+  one `httpx` client and one HTTP/2 connection driven from every worker thread; the
+  loser gets `httpx.ReadError` and a healthy page renders as a crash. It reads as
+  harmless memoisation. It is the bug.
+- **Middleware order in `main.py` is load-bearing** ([[adr-0024]]). The last middleware
+  added is the outermost, so the catch-all must be registered *before* `CORSMiddleware`.
+  An `@app.exception_handler(Exception)` does not work here — it installs on
+  `ServerErrorMiddleware`, outside CORS, and the 500 goes back with no headers.
+- **A frontend build with no `VITE_SUPABASE_URL` exits 0 and ships nothing**
+  ([[adr-0025]]). 262 kB instead of 581 kB. `vite.config.ts` now refuses it.
+- **`secrets` is not readable from a workflow `if`** — at job or step level. It does not
+  evaluate false, it fails the file to parse. Map to `env` on the job and test `env.X`.
+- **Render builds from the `backend/` root**, so a commit touching only `.github/` or
+  docs does not redeploy it. `/health`'s `commit` field is how you tell.
+- **Pushing `.github/workflows/*` needs the `workflow` OAuth scope** on the `gh` login.
+  Without it the push is rejected with everything else in the commit.
 - `.env` is gitignored and the repo is **public**. Check before every push.
 - SSH to GitHub fails (`Permission denied (publickey)`) — the key at
   `~/.ssh/id_ed25519.pub` is not registered on the account. The remote uses HTTPS

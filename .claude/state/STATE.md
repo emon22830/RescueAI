@@ -1,117 +1,133 @@
 # Where the project is
 
-**Updated:** 2026-09-14 · **Version:** 0.6.0 · **Phase:** 4 of 4 — Proven against a live workspace
+**Updated:** 2026-09-14 · **Version:** 0.6.1 · **Phase:** 4 of 4 — Live, and hardened for it
 
 ## In one paragraph
 
-RescueAI does the whole job it was designed for. It reads ten apps, reasons over the
-evidence, names blockers with the evidence attached, proposes a recovery plan, and —
-once a human approves — carries that plan out in nine of the ten, across 31 action
-types covering create, update, delegate, close and message. It no longer waits to be
-asked: a project can re-analyse itself on a schedule, and the owner is told in the app
-when the verdict changes. A user can also act directly from the dashboard without
-waiting for the agent to propose anything. Whichever tracker a team runs — Linear,
-Jira, Asana or Trello — is covered, which is what makes it usable outside a startup.
+RescueAI does the whole job it was designed for, and it is deployed. It reads ten apps,
+reasons over the evidence, names blockers with the evidence attached, proposes a recovery
+plan, and — once a human approves — carries it out in nine of the ten across 31 action
+types. It re-analyses on a schedule and tells the owner in the app when the verdict
+changes. Backend on Render, frontend on Vercel, both deploying from `main` on push, with
+CI running the suite on every push and pull request. 244 backend tests and 8 frontend
+tests back it, and the backend suite is hermetic.
 
-**It has now run for real.** Migrations 0002–0005 are applied to the live Supabase
-project, and a full analysis has completed end to end against a live workspace: 10
-real GitHub commits collected with working URLs, the project state written by the risk
-agent in its own words, and Ask answering from that evidence with citations. 223 tests
-back it, and the suite is hermetic.
+**This session was production hardening, and it found real bugs.** The one that mattered
+most had been mis-diagnosed twice: opening a project returned 500s because all seven of
+the page's parallel requests shared one Supabase client across seven worker threads, and
+HTTP/2 multiplexing over a single connection is not safe to drive that way
+([[adr-0023]]). It was hard to see because an unhandled error was being answered
+*outside* the CORS middleware, so it reached the browser as "backend unreachable" rather
+than as a 500 ([[adr-0024]]). Both are fixed. Separately, a production build with no
+`VITE_SUPABASE_URL` was silently tree-shaking the entire app away and deploying a white
+screen with a green build ([[adr-0025]]).
 
-Two bugs were found by that first live run, and by nothing else: the recovery planner
-sent a schema the Gemini Developer API refuses outright, and a transient provider 503
-threw away a whole investigation after the evidence had been collected. Both are fixed,
-both now have tests. What is still unproven is narrow: **no write action has been
-executed against a real workspace**, because that needs a token with write scope on
-something safe to write to.
+What is still unproven is unchanged and narrow: **no write action has been executed
+against a real workspace**, and no finding has ever been produced from live evidence
+because only one app is connected on any project.
 
 ## Done
 
 - Backend: FastAPI, config, Supabase client, project service, **23 endpoints**
-- Auth: Supabase Auth, per-project ownership checked in `service.py`, never from the URL
+- Auth: Supabase Auth, per-project ownership checked in `service.py`, never from the URL.
+  A verified token is remembered for 60s so one screen does not cost seven Auth hops
+  ([[adr-0028]])
 - Per-project encrypted credentials for Slack/Linear/GitHub, per-project Google consent
-- LangGraph workflow: supervisor → 3 parallel investigators → risk → recovery
-- Every run persists evidence, findings, actions, activity, health, summary, progress
-- **Ten integrations collect; nine execute, across 31 action types.** The whole manager
-  vocabulary — add, update, delegate, close, message — in whichever app the team uses.
-  Trackers: Linear, **Jira**, **Asana**, **Trello**. Chat and mail: Slack, Gmail. Code:
-  GitHub. Specs and dates: Drive, **Notion**, Calendar. Drive is the one app that only
-  ever collects ([[adr-0021]])
-- **Four investigators, not three.** `delivery` reads every tracker and `engineering`
-  keeps GitHub alone — what a team built and what its plan says are different questions,
-  and the distance between them is the finding ([[adr-0020]])
-- **One catalog, `executor.ACTION_TYPES`, is the contract** between the planner, the API
-  and the UI. The recovery prompt is generated from it and the composer is served it, so
-  a type cannot exist in one place and not another — a test proves it ([[adr-0018]])
-- **A user can act without the agent proposing it.** `POST /projects/{id}/actions` takes
-  one action straight from the dashboard, through the same row, states and guard as an
-  approved plan step; `origin` records who wrote it ([[adr-0019]])
-- **An analysis is accepted, not awaited.** `POST /analyze` and `/sync` return **202**
-  with a `queued` run; the work happens behind the request and the run row is the
-  handle. A failure is recorded on the run instead of raised as a 500 ([[adr-0015]])
-- **Continuous monitoring.** `PUT /projects/{id}/schedule` sets a per-project interval;
-  `app/scheduler.py` is one in-process asyncio loop that runs what is due ([[adr-0016]])
-- **Notifications.** A scheduled run that changes a project's health, or fails, writes a
-  notification. In-app only — a verdict is never posted into someone's Slack
-  unapproved ([[adr-0017]]). `GET /notifications`, `POST /notifications/read`
-- Frontend: the project page follows a run to completion instead of blocking on the
-  request, a Monitoring card turns the schedule on and off, a "Take an action" composer
-  acts on any connected app, and a bell in the app shell surfaces what the agent
-  concluded while nobody was watching
-- **The live Supabase project exists and works.** `backend/.env` is filled in; 4
-  projects, 4 runs and 3 connected integrations (GitHub, Google) are in the real
-  database. The old "no credentials" blocker is gone.
-- 203 backend tests passing, and hermetic — the suite no longer reaches the live
-  Supabase project ([[adr-0022]]); `npm run build` and `npm run lint` clean
+- LangGraph workflow: supervisor → 4 parallel investigators → risk → recovery
+- **Ten integrations collect; nine execute, across 31 action types** ([[adr-0021]])
+- **One catalog, `executor.ACTION_TYPES`, is the contract** between planner, API and UI
+  ([[adr-0018]])
+- **Continuous monitoring** ([[adr-0016]]) and **in-app notifications** ([[adr-0017]])
+- **Migrations 0002–0005 are applied to the live database** and a full analysis has
+  completed end to end: 10 real GitHub commits with working URLs, project state written
+  by the risk agent, Ask answering from that evidence with citations
+
+### Deployed and verifiable
+
+- **Backend** https://rescueai-xkhy.onrender.com · **Frontend** https://rescue-ai-self.vercel.app
+- `GET /health` reports `{"status","version","commit"}`. `commit` comes from
+  `RENDER_GIT_COMMIT` and is **the way to tell a deploy that landed from one still
+  rolling out** — without it, a pushed fix and a live one are indistinguishable, which
+  cost real time this session
+- Render builds from the `backend/` root, so a commit touching only `.github/` or docs
+  correctly does **not** redeploy it. A stale `commit` there is not always a problem
+- CI (`.github/workflows/ci.yml`): backend tests, frontend lint/test/build, and a check
+  that the emitted bundle still contains the app
+- `main` is protected — required checks, no force-push, no deletion, admins exempt
+  ([[adr-0027]])
+- Dependencies pinned, Dependabot opens weekly grouped updates ([[adr-0026]])
+
+### Fixed this session
+
+- **The 500s behind "Project unavailable"** — one Supabase client shared across worker
+  threads ([[adr-0023]]). This is the real cause; CORS and a key mismatch were both
+  wrong guesses
+- **Errors that looked like outages** — a 500 answered outside CORS reaches the browser
+  as unreachable ([[adr-0024]])
+- **Builds that ship an empty app** — 262 kB instead of 581 kB, exit 0 ([[adr-0025]])
+- **A dead session with no way out** — the frontend now refreshes an expired token once,
+  retries, and signs out if it is really gone. The refresh is shared across concurrent
+  requests because Supabase rotates the refresh token, so refreshing per failure ends a
+  session that only needed renewing. Eight tests cover it
+- **CORS rejecting every origin** — `settings.allowed_origins` tolerates a trailing
+  slash, wrapping quotes and stray spacing, because a malformed value fails invisibly
+- **Ask burning 90 seconds on a refused quota** — `ProviderError` is handled, and the
+  retry honours the provider's own `RetryInfo` instead of guessing
+- **One failed request blanking a loaded page** — `ProjectPage` uses `allSettled`
 
 ## Not done
 
-- **None of the three migrations has been run against the live database.** `0002`
-  (scheduling and notifications), `0003` (dashboard actions) and `0004` (the four new
-  connectors) are all outstanding. Until `0002`, `PUT /schedule` answers 502 and no
-  notification can be written; until `0003`, `POST /actions` answers 502 because
-  `run_id` is still `not null`; until `0004`, connecting Jira, Notion, Asana or Trello
-  — or storing any evidence from them — violates a check constraint. Analysis through
-  the original six still works.
-- Slack and Linear are not connected on any live project, so the two richest evidence
-  sources have never been collected from for real
-- No finding has ever been produced from live evidence — `findings` has 0 rows
-- The demo scenario still does not exist in the real workspaces (blocker 2)
-- No write action has been executed against a live workspace. The request shapes match
-  the current API docs and are pinned by tests down to the JSON body, but nothing has
-  round-tripped a real token.
+- **No write action has been executed against a live workspace.** Shapes match current
+  API docs and are pinned by tests down to the JSON body, but nothing has round-tripped
+  a real token
+- **No finding has ever come from live evidence** — `findings` has 0 rows. Only GitHub
+  and Google are connected anywhere; Slack and Linear, the two richest sources, are not
+  connected on any project
+- The demo scenario does not exist in the real workspaces (blocker 2)
+- **The deploy is not gated by CI.** Render and Vercel deploy in parallel with the
+  checks, so a red build still ships ([[adr-0027]])
+- No error tracking — a failure reaches Render's logs and nowhere else
+- `/health` does not check its dependencies: it reports `ok` when Supabase is unreachable
 
 ## Next three tasks
 
-1. **Execute one write against a real workspace** — the last unproven path. Slack
-   `post_message` is the sharpest test: it is the only write with a lookup in front of
-   it (`resolve_channel`), and it needs `chat:write`, which collection does not. Connect
-   Slack on a throwaway channel, take the action from the dashboard composer, and read
-   what comes back.
-2. **Get a second app onto one project**, so the risk agent is judged on *cross-app*
-   evidence. Today's live run had GitHub alone, and a finding is only worth reading when
-   it connects two sources — with one app the honest answer was 0 findings, which is
-   correct but proves only half the prompt.
-3. **Take one action from the dashboard against a real workspace** — a Slack
-   `post_message` is the sharpest test, because it is the only write with a lookup in
-   front of it (`resolve_channel` turns `#payments` into a channel id) and it needs the
-   `chat:write` scope, which is *not* in the scope list collection asks for. Then try a
-   Linear `create_issue`, the only other write that has to resolve something it was not
-   given (`resolve_team`).
+1. **Connect Slack on one live project and execute one write.** This closes the last
+   unproven path *and* the richest evidence gap in one move. `post_message` is the
+   sharpest test: it is the only write with a lookup in front of it (`resolve_channel`
+   turns `#payments` into a channel id) and it needs `chat:write`, which is **not** in
+   the scope list collection asks for — an existing bot token will be rejected until the
+   scope is added and the app reinstalled. Take the action from the dashboard composer.
+2. **Get a second app onto that same project and re-run the analysis**, so the risk agent
+   is judged on *cross-app* evidence. Today's live run had GitHub alone, and a finding is
+   only worth reading when it connects two sources — with one app, 0 findings is correct
+   but proves half the prompt.
+3. **Gate the deploy, or decide not to.** Two changes per service and both halves matter:
+   add a deploy hook as `RENDER_DEPLOY_HOOK_URL` / `VERCEL_DEPLOY_HOOK_URL`, *and* turn
+   auto-deploy off on that service. Adding only the hook deploys everything twice. The
+   `deploy` job already reads both and skips whichever is absent.
 
 ## How to run it
 
 ```bash
 # backend  → http://localhost:8000   (the scheduler starts with it)
 cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000 --host ::
-cd backend && .venv/bin/python -m pytest tests -q
+cd backend && .venv/bin/python -m pytest tests -q        # 244 tests, hermetic
 
 # frontend → http://localhost:5173
-cd frontend && npm run dev && npm run build
+cd frontend && npm run dev
+cd frontend && npm test && npm run lint && npm run build  # 8 tests
 ```
 
-The scheduler is in-process: monitoring only runs while the backend is running. Set
-`SCHEDULER_ENABLED=false` on any second instance, or both will pick up the same project.
+`npm run build` **fails** without `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in
+`frontend/.env`. That is deliberate ([[adr-0025]]) — without it the build silently emits
+an app with no app in it.
+
+The scheduler is in-process: monitoring only runs while the backend runs. Set
+`SCHEDULER_ENABLED=false` on any second instance, or both pick up the same project.
 
 If `.venv` is missing: `cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
+
+```bash
+# Is my fix live?
+curl https://rescueai-xkhy.onrender.com/health
+```

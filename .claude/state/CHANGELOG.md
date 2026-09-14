@@ -2,6 +2,63 @@
 
 Semver. MAJOR = breaking contract or schema. MINOR = shipped feature. PATCH = fix.
 
+## [0.6.1] — 2026-09-14
+
+**Deployed, and hardened for it.** The 500s behind "Project unavailable" turned out to
+be a threading bug that two earlier investigations had walked past, and a green frontend
+build turned out to be capable of shipping no app at all.
+
+### Fixed
+- **A healthy project page reported itself unavailable.** `get_db()` was `@lru_cache`d,
+  so the process shared one Supabase client. FastAPI runs every `def` endpoint in a
+  worker thread and the page opens seven requests at once, so seven threads drove one
+  `httpx` client over one HTTP/2 connection. The loser raised `httpx.ReadError`, nothing
+  handled it, and data that had loaded fine rendered as a crash. One client per thread
+  ([[adr-0023]]).
+- **An unhandled error reached the browser as "backend unreachable".** Starlette answers
+  it outside `CORSMiddleware`, so the 500 carried no `access-control-allow-origin` and
+  `fetch` rejected. This is why the bug above was mis-diagnosed twice. A catch-all
+  registered before the CORS middleware ([[adr-0024]]).
+- **A production build could ship an empty app.** Without `VITE_SUPABASE_URL`, the throw
+  in `supabaseClient.ts` becomes provably unconditional before minification and the
+  whole app tree-shakes away — exit 0, 262 kB instead of 581 kB, white screen
+  ([[adr-0025]]).
+- **CORS rejected every origin, including its own default.** A trailing slash or
+  wrapping quotes in `CORS_ORIGINS` matched nothing and failed invisibly.
+  `settings.allowed_origins` normalises; `app_url` uses it too, which also fixes a
+  `//app` in the Google OAuth return URL.
+- **An expired session was a dead end.** Nothing handled a 401, so every screen showed
+  "Invalid or expired session" until the user signed out by hand. The client now
+  refreshes once, retries, and signs out if the session is really gone — the refresh
+  shared across concurrent requests, because Supabase rotates the refresh token and
+  refreshing per failure ends a session that only needed renewing.
+- **Ask spent 90 seconds retrying a refused quota** and then said "unexpected error".
+  `ProviderError` is handled; the retry honours the provider's own `RetryInfo` and gives
+  up on a daily quota instead of backing off into one.
+- **One failed request blanked a loaded page.** `ProjectPage` uses `allSettled`.
+- A `CredentialError` no longer 500s — it names `CREDENTIAL_ENCRYPTION_KEY`.
+
+### Added
+- `GET /health` reports `version` and the running `commit` from `RENDER_GIT_COMMIT` —
+  the only way to tell a deploy that landed from one still rolling out
+- `.github/workflows/ci.yml` — backend tests, frontend lint/test/build, and a check that
+  the emitted bundle still contains the app
+- `.github/dependabot.yml` — weekly grouped updates for pip, npm and the actions
+- Branch protection on `main`: required checks, no force-push, no deletion
+  ([[adr-0027]])
+- `frontend/src/lib/api.test.ts` — the first frontend tests. Eight, covering the session
+  handling, checked to fail when the dedupe and the sign-out are removed
+- `tests/test_config.py`, `tests/test_db_client.py`
+- A token verification cache, 60s, successes only ([[adr-0028]])
+
+### Changed
+- `backend/requirements.txt` pins its direct dependencies ([[adr-0026]])
+
+### Resolved blockers
+- **Migrations 0002–0005 have been run against the live database.** Scheduling,
+  notifications, dashboard actions and the four new connectors all work against the real
+  schema, and a full analysis has completed end to end.
+
 ## [0.6.0] — 2026-09-14
 
 **The first analysis to run against a live workspace.** 10 real GitHub commits

@@ -1,19 +1,19 @@
 {
   "project": "RescueAI",
   "repo": "https://github.com/emon22830/RescueAI",
-  "version": "0.6.0",
-  "phase": "4 of 4 \u2014 Proven against a live workspace",
+  "version": "0.6.1",
+  "phase": "4 of 4 \u2014 Live, and hardened for it",
   "updated": "2026-09-14",
   "claude_setup_version": "1.0.0",
   "stack_locked": true,
   "surfaces": {
     "backend": {
-      "version": "0.6.0",
-      "status": "ten connectors, 31 action types, scheduling, dashboard actions; migrations applied and one full analysis proven live"
+      "version": "0.6.1",
+      "status": "deployed on Render; ten connectors, 31 action types, scheduling; migrations applied, one full analysis proven live; 244 hermetic tests"
     },
     "frontend": {
-      "version": "0.4.0",
-      "status": "builds and lints clean; ten apps connectable, action composer, monitoring, notifications"
+      "version": "0.5.0",
+      "status": "deployed on Vercel; session recovery on 401, 8 tests, build refuses to run without its Supabase variables"
     }
   },
   "context_versions": {
@@ -23,6 +23,12 @@
     "03-schema.md": 4,
     "04-api-contracts.md": 5
   },
-  "latest_adr": 22,
-  "open_blockers": 3
+  "latest_adr": 28,
+  "open_blockers": 4,
+  "deployment": {
+    "backend": "https://rescueai-xkhy.onrender.com",
+    "frontend": "https://rescue-ai-self.vercel.app",
+    "ci": "GitHub Actions on push and pull request; deploy not gated (blocker 3)",
+    "verify": "curl https://rescueai-xkhy.onrender.com/health -> {status, version, commit}"
+  }
 }
