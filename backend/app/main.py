@@ -10,7 +10,7 @@ from postgrest import APIError
 
 from app.ai.llm import LLMError
 from app.api import actions, analysis, ask, integrations, notifications, projects
-from app.auth import AuthError
+from app.auth import AuthError, CredentialError
 from app.auth.router import router as auth_router
 from app.config import ConfigurationError, settings
 from app.projects.service import ProjectNotFound
@@ -32,6 +32,32 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="RescueAI", version="0.5.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def answer_unhandled_errors(request: Request, call_next):
+    """Turn a crash into a response, inside the CORS layer.
+
+    Starlette answers an unhandled exception from its outermost middleware — outside
+    CORS — so the 500 goes back with no `access-control-allow-origin`. The browser then
+    refuses to show it and `fetch` rejects, so a backend that crashed on one endpoint
+    reads in the UI as a backend that is down. Everything the handlers below name is
+    already a response by the time it reaches here; this only catches what nothing
+    else did.
+
+    Registered before the CORS middleware on purpose: the last middleware added is the
+    outermost, so adding CORS after this one puts it outside, where it can still stamp
+    its headers onto what we return.
+    """
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "The server hit an unexpected error. Check the backend logs."},
+        )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,6 +91,22 @@ async def handle_llm_error(request: Request, error: LLMError) -> JSONResponse:
     not replying."""
     logger.exception("LLM request failed")
     return JSONResponse(status_code=502, content={"detail": str(error)})
+
+
+@app.exception_handler(CredentialError)
+async def handle_credential_error(request: Request, error: CredentialError) -> JSONResponse:
+    """A stored token cannot be decrypted, which means CREDENTIAL_ENCRYPTION_KEY is not
+    the key that encrypted it — rotated, or different between local and deployed. The
+    token is unrecoverable; say so and name what fixes it, rather than 500ing."""
+    logger.exception("Credential decryption failed")
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "A stored credential could not be decrypted. CREDENTIAL_ENCRYPTION_KEY "
+            "has changed since this app was connected — reconnect it from the project's "
+            "Connections page.",
+        },
+    )
 
 
 @app.exception_handler(ValueError)

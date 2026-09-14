@@ -17,27 +17,45 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  // The backend decides who a user is and what they can reach — every call proves who
-  // is asking with the current Supabase session token. Nothing here reads or acts on
-  // the token; it is only ever attached and handed off.
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token
+/** One refresh at a time.
+ *
+ * A page opens several requests at once, so an expired token fails several of them at
+ * once. Refreshing per failure would race: Supabase rotates the refresh token, the
+ * first call consumes it and the rest present one that no longer exists, which ends a
+ * session that only needed renewing. They all wait on the same refresh instead.
+ */
+let refreshing: Promise<string | null> | null = null
 
-  let response: Response
+function refreshAccessToken(): Promise<string | null> {
+  if (!refreshing) {
+    refreshing = supabase.auth
+      .refreshSession()
+      .then(({ data }) => data.session?.access_token ?? null)
+      .catch(() => null)
+      .finally(() => {
+        refreshing = null
+      })
+  }
+  return refreshing
+}
+
+async function send(path: string, token: string | null, options?: RequestInit): Promise<Response> {
   try {
-    response = await fetch(`${BASE}${path}`, {
+    return await fetch(`${BASE}${path}`, {
+      ...options,
+      // After the spread, never before it — a caller's `headers` must not be able to
+      // drop the Authorization header and turn an ordinary call into an anonymous one.
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options?.headers,
       },
-      ...options,
     })
   } catch {
     // fetch only rejects before a response exists: the host is unreachable, or the
-    // browser blocked the response because the origin is not in the backend's
-    // CORS_ORIGINS. The deployed app is the second case far more often, and "port
-    // 8000" is a lie there — so name the host that actually failed.
+    // browser blocked the response because it carried no CORS headers. The deployed
+    // app is the second case far more often, and "port 8000" is a lie there — so name
+    // the host that actually failed.
     throw new ApiError(
       0,
       BASE
@@ -46,9 +64,34 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
         : 'Could not reach the backend. Is it running on port 8000?',
     )
   }
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  // The backend decides who a user is and what they can reach — every call proves who
+  // is asking with the current Supabase session token. Nothing here reads or acts on
+  // the token; it is only ever attached and handed off.
+  const { data } = await supabase.auth.getSession()
+  let response = await send(path, data.session?.access_token ?? null, options)
+
+  if (response.status === 401) {
+    // getSession() hands back whatever is cached, and the backend may have stopped
+    // accepting it — it expired while the tab sat open, or another tab rotated it.
+    // One forced refresh separates a token that needs renewing from a session that is
+    // really gone.
+    const token = await refreshAccessToken()
+    if (token) response = await send(path, token, options)
+
+    if (response.status === 401) {
+      // Really gone. Ending it here is what makes the app recover: the session goes
+      // null, RequireAuth sends the user to sign in and brings them back to this page.
+      // Left in place, every screen shows "Invalid or expired session" until the user
+      // works out that the fix is to sign out by hand.
+      await supabase.auth.signOut()
+    }
+  }
 
   if (!response.ok) {
-    // The four handlers in main.py all answer {"detail": "..."} — show that, not the body.
+    // The handlers in main.py all answer {"detail": "..."} — show that, not the body.
     const body = await response.text()
     let detail = body
     try {

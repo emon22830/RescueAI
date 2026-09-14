@@ -37,3 +37,26 @@ def test_app_url_is_the_first_origin_normalized():
 
 def test_app_url_falls_back_when_no_origin_is_configured():
     assert Settings(cors_origins="").app_url == "http://localhost:5173"
+
+
+def test_unhandled_error_still_answers_with_cors_headers(client):
+    """A crash must look like a crash, not like a backend that is down.
+
+    Starlette answers an unhandled exception outside the CORS middleware, so the 500
+    goes back with no access-control-allow-origin, the browser refuses to show it and
+    the UI reports the whole backend as unreachable. main.py catches it inside the CORS
+    layer instead.
+    """
+    from app.main import app
+
+    @app.get("/_test_boom")
+    def boom():
+        raise RuntimeError("nothing handles this")
+
+    try:
+        response = client.get("/_test_boom", headers={"Origin": "http://localhost:5173"})
+        assert response.status_code == 500
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+        assert "unexpected error" in response.json()["detail"]
+    finally:
+        app.router.routes = [r for r in app.router.routes if getattr(r, "path", "") != "/_test_boom"]
