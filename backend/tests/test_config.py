@@ -60,3 +60,20 @@ def test_unhandled_error_still_answers_with_cors_headers(client):
         assert "unexpected error" in response.json()["detail"]
     finally:
         app.router.routes = [r for r in app.router.routes if getattr(r, "path", "") != "/_test_boom"]
+
+
+def test_health_reports_the_build_that_is_answering(client):
+    """A deploy has to be checkable from outside — a pushed fix and a live one are
+    otherwise indistinguishable."""
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    assert body["version"]
+    # Nothing sets RENDER_GIT_COMMIT off Render, so a local or test run says so.
+    assert body["commit"] == "local"
+
+
+def test_health_reports_the_commit_when_render_sets_one(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "render_git_commit", "2d040814a9f0deadbeef")
+    assert client.get("/health").json()["commit"] == "2d04081"

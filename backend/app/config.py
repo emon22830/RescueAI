@@ -36,6 +36,10 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:5173"
 
+    # Set by Render on every service, empty anywhere else. Only /health reads it, and
+    # only so a deploy can be told apart from a push — see the note there.
+    render_git_commit: str = ""
+
     # The in-process loop that re-analyses projects on their own schedule
     # (app/scheduler.py). Turn it off on a second instance, or in a worker-less
     # deployment, so two processes do not both pick up the same due project.

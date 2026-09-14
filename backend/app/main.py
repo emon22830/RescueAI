@@ -134,4 +134,16 @@ app.include_router(notifications.router)
 
 @app.get("/health", tags=["health"])
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    """Whether the service is up, and which build is answering.
+
+    The commit is what makes a deploy verifiable from outside. Without it a fix that is
+    still rolling out looks exactly like a fix that is live, and the only way to tell
+    them apart is to find a behaviour that changed and probe for it — which does not
+    exist for a fix to an error path. `RENDER_GIT_COMMIT` is set by Render on every
+    service and is empty everywhere else, so locally this reads "local".
+    """
+    return {
+        "status": "ok",
+        "version": app.version,
+        "commit": settings.render_git_commit[:7] or "local",
+    }

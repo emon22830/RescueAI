@@ -19,7 +19,8 @@ def create_project(client: TestClient) -> dict:
 
 
 def test_health(client: TestClient):
-    assert client.get("/health").json() == {"status": "ok"}
+    # The build fields are covered in test_config.py; this is the liveness contract.
+    assert client.get("/health").json()["status"] == "ok"
 
 
 def test_create_project_returns_the_saved_project(client: TestClient):
